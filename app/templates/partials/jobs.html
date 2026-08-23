@@ -1,0 +1,27 @@
+<div hx-get="/partials/jobs" hx-trigger="every 1s" hx-swap="outerHTML">
+  {% if totals.tracks_total %}
+  <div class="summary">
+    Прослушиваний музыки: <b>{{ totals.music_listens }}</b> из {{ totals.listens_total }}
+    · музыкальных треков: <b>{{ totals.music_tracks }}</b>
+    · оценочное время: <b>{{ totals.hours_est }} ч</b>
+    {% if totals.first_listen %}· период: {{ totals.first_listen[:10] }} — {{ totals.last_listen[:10] }}{% endif %}
+  </div>
+  {% endif %}
+  {% for job in jobs %}
+  <div class="job job-{{ job.status }}">
+    <div class="job-head">
+      <span class="job-kind">{{ {'import':'Импорт истории','filter':'Фильтр музыки','audio':'Аудио-анализ','clusters':'Кластеризация'}[job.kind] }}</span>
+      <span class="badge badge-{{ job.status }}">{{ {'pending':'ожидает','running':'выполняется','done':'готово','error':'ошибка'}[job.status] }}</span>
+      {% if job.status == 'running' and job.total %}<span class="job-count">{{ job.done }} / {{ job.total }}</span>{% endif %}
+    </div>
+    {% if job.total %}
+    <div class="progress"><div class="progress-fill" style="width: {{ (job.done / job.total * 100) | round(1) }}%"></div></div>
+    {% endif %}
+    {% if job.detail %}<div class="job-detail">{{ job.detail }}</div>{% endif %}
+    {% if job.error %}<div class="job-error">{{ job.error }}</div>{% endif %}
+  </div>
+  {% endfor %}
+  {% if not jobs %}
+  <div class="job job-empty">Заданий пока не было. Начните с импорта истории ниже.</div>
+  {% endif %}
+</div>

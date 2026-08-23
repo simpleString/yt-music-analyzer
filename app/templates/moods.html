@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Настроения · yt-music-analyzer{% endblock %}
+{% block content %}
+<h1>Плейлисты по настроению</h1>
+{% if cards and meta_only %}
+<div class="alert">Предварительная оценка по метаданным (названия, время прослушивания) — без аудио-анализа. Когда появится возможность скачать аудио, настроения пересчитаются по-настоящему.</div>
+{% elif not cards %}
+<div class="alert">Кластеров нет. Нужны импорт → фильтр → кластеризация.</div>
+{% endif %}
+
+<div class="grid-2">
+  {% for card in cards %}
+  <section class="card">
+    <h2>{{ card.cluster.name }} <span class="badge">{{ card.cluster.size }} треков</span></h2>
+    <ol>
+      {% for t in card.tracks %}
+      <li>
+        <a href="https://www.youtube.com/watch?v={{ t.video_id }}" target="_blank" rel="noopener">{{ t.title }}</a>
+        <span class="muted">— {{ t.channel }} · {{ t.play_count }} просл.</span>
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

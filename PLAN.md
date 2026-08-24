@@ -16,7 +16,7 @@
 |---|---|
 | Backend | Python 3.12 (uv), FastAPI |
 | БД | SQLite (SQLModel) |
-| Frontend | Jinja2 + htmx + Chart.js (серверный рендеринг) |
+| Frontend | React + TypeScript (Vite), shadcn/ui + Tailwind CSS, TanStack Query, Recharts (SPA, раздаётся FastAPI) |
 | Аудио-фичи | librosa (темп, энергия, танцевальность), Essentia (настроение, жанр — предобученные нейромодели) |
 | Загрузка аудио | yt-dlp (низкий битрейт, кэш) |
 | Кластеризация | scikit-learn (k-means, nearest neighbors) |
@@ -48,7 +48,7 @@ watch-history.json → Парсер → SQLite → Фильтр музыки →
 - librosa: темп (BPM), RMS-энергия, танцевальность, акустичность
 - Essentia: настроение (happy/sad/relaxed/aggressive — вероятности), жанр
 - Результаты в БД; повторный анализ не требуется, аудио можно удалять
-- Прогресс отображается в UI (htmx-поллинг)
+- Прогресс отображается в UI (поллинг `/api/state` из React-приложения)
 
 ### Этап 4. Плейлисты по настроению
 - Векторы фич каждого трека нормализуются
@@ -112,6 +112,7 @@ watch-history.json → Парсер → SQLite → Фильтр музыки →
 
 ## Замечания
 
+- Frontend — SPA на React: бэкенд отдаёт только JSON (`/api/*`) и собранный бандл из `dist/`. Разработка: `uv run uvicorn app.main:app` + `npm run dev` (Vite-прокси `/api` → :8000); продакшен: `npm run build`, затем uvicorn
 - Реализовано на Python 3.14: у Essentia нет wheel для 3.12 (на PyPI только cp36–311 в старых сборках и cp314 в lite-сборке без TF-моделей), поэтому настроения считаются эвристически из librosa-фич; Essentia не используется
 - Фильтрация музыки: header «YouTube Музыка» из Takeout помечает трек сразу; остальное — эвристики (VEVO/-Topic каналы, feat./official/lyrics/remix, «артист - трек»); при заданном YOUTUBE_API_KEY неуверенные случаи уточняются через videos.list (категория 10 + длительность 1–10 мин)
 - Скачивание аудио работает через датацентровый IP (VPN) благодаря SABR-ветке yt-dlp (PR #13515, `coletdjnz/yt-dlp-dev@feat/youtube/sabr`, закреплена в pyproject): формат `ba[protocol=sabr]` + `formats=duplicate` + `player-client=web` + EJS-скрипты (`yt-dlp-ejs`, рантайм node) + cookies Chrome (`AUDIO_COOKIES_FROM_BROWSER`); локальный POT-сервер (data/tools/bgutil-pot-server) поднимается приложением автоматически. Треки без аудио получают предварительные оценки настроения по метаданным (`audio_features.source='meta'`) и перезаписываются реальными фичами при аудио-анализе

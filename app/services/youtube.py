@@ -1,10 +1,10 @@
-import math
 import re
 
 import httpx
 from sqlmodel import Session
 
 from app.config import settings
+from app.db import engine
 from app.services.jobs import get_meta, quota_key, set_meta
 
 API_URL = "https://www.googleapis.com/youtube/v3/videos"
@@ -40,7 +40,7 @@ def fetch_videos_details(video_ids: list[str]) -> dict[str, dict]:
     with httpx.Client(timeout=20) as client:
         for i in range(0, len(video_ids), BATCH):
             chunk = video_ids[i : i + BATCH]
-            with Session() as session:
+            with Session(engine) as session:
                 if quota_left(session) <= 100:
                     break
                 used = int(get_meta(session, quota_key()) or 0)
@@ -78,9 +78,3 @@ def _to_int(v: object) -> int | None:
         return int(v) if v is not None else None  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
-
-
-def duration_minutes_ok(seconds: float | None) -> bool:
-    if seconds is None:
-        return False
-    return math.isnan(seconds) is False and 60 <= seconds <= 600

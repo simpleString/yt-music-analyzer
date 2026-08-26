@@ -8,6 +8,7 @@ const NAV = [
   { to: "/dashboard", label: "Дашборд" },
   { to: "/moods", label: "Настроения" },
   { to: "/recommendations", label: "Рекомендации" },
+  { to: "/import", label: "Импорт" },
 ]
 
 export function Layout() {
@@ -17,7 +18,7 @@ export function Layout() {
   return (
     <div className="min-h-svh">
       <header className="bg-background/95 sticky top-0 z-40 w-full border-b backdrop-blur">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
+        <div className="flex w-full flex-wrap items-center gap-x-6 gap-y-2 px-6 py-3">
           <span className="text-sm font-bold tracking-tight">
             yt-music-analyzer
           </span>
@@ -48,7 +49,7 @@ export function Layout() {
           )}
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-4 py-8">
+      <main className="w-full px-6 py-8">
         <Outlet />
       </main>
     </div>

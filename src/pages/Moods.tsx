@@ -25,19 +25,20 @@ export function Moods() {
         Плейлисты по настроению
       </h1>
 
-      {data.cards.length > 0 && data.meta_only && (
-        <Alert>
-          <AlertDescription>
-            Предварительная оценка по метаданным (названия, время прослушивания)
-            — без аудио-анализа. Когда появится возможность скачать аудио,
-            настроения пересчитаются по-настоящему.
-          </AlertDescription>
-        </Alert>
-      )}
       {data.cards.length === 0 && (
         <Alert>
           <AlertDescription>
-            Кластеров нет. Нужны импорт → фильтр → кластеризация.
+            Кластеров нет. Нужны импорт → фильтр → аудио-анализ →
+            кластеризация.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {data.cards.length > 0 && data.analyzed < 20 && (
+        <Alert>
+          <AlertDescription>
+            Проанализировано всего {data.analyzed} треков — плейлисты
+            неполные. Запустите «Аудио-анализ» на странице импорта.
           </AlertDescription>
         </Alert>
       )}

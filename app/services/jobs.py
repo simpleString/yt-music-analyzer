@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from app.db import engine
 from app.models import AppMeta, Job
 
-KINDS = ("import", "filter", "audio", "clusters")
+KINDS = ("import", "filter", "audio", "clusters", "lyrics")
 
 
 def _now() -> datetime:

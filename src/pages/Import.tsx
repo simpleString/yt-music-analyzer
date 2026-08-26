@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 
 import { api, type JobKind, useStateQuery } from "@/lib/api"
@@ -14,12 +14,27 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 
-export function Home() {
+export function ImportPage() {
   const queryClient = useQueryClient()
   const { data: state } = useStateQuery()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [pathValue, setPathValue] = useState("")
   const [error, setError] = useState("")
+
+  const prevStatuses = useRef<Record<string, string>>({})
+  useEffect(() => {
+    if (!state) return
+    const statuses = Object.fromEntries(
+      state.jobs.map((j) => [j.kind, j.status])
+    )
+    const justFinished = Object.entries(statuses).some(
+      ([kind, status]) =>
+        status === "done" &&
+        ["running", "pending"].includes(prevStatuses.current[kind])
+    )
+    prevStatuses.current = statuses
+    if (justFinished) queryClient.invalidateQueries()
+  }, [state, queryClient])
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["state"] })
 
@@ -46,7 +61,8 @@ export function Home() {
     mutationFn: (kind: Exclude<JobKind, "import">) => {
       if (kind === "filter") return api.runFilter()
       if (kind === "audio") return api.runAudio()
-      return api.runClusters()
+      if (kind === "clusters") return api.runClusters()
+      return api.runLyrics()
     },
     onSuccess: invalidate,
     onError: (e) => setError(e.message),
@@ -161,6 +177,12 @@ export function Home() {
             onClick={() => pipeline.mutate("clusters")}
           >
             Кластеризация → плейлисты
+          </Button>
+          <Button
+            disabled={busy || busyKinds.has("lyrics")}
+            onClick={() => pipeline.mutate("lyrics")}
+          >
+            Тексты песен
           </Button>
         </CardContent>
       </Card>

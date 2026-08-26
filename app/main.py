@@ -2,21 +2,28 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from app.config import settings
 from app.db import engine, init_db
-from app.models import AudioFeatures, Cluster, Job, Track
+from app.models import AudioFeatures, Cluster, Job, Listen, Lyrics, Track
 from app.parsers.takeout import load_history_file
 from app.services import jobs as jobs_svc
 from app.services.audio import run_audio_analysis
 from app.services.clustering import run_clustering
 from app.services.importer import run_import
+from app.services.lyrics import run_lyrics
 from app.services.music_filter import run_filter
-from app.services.recommend import mb_for_track, similar_tracks
+from app.services.recommend import (
+    mb_for_track,
+    similar_artists,
+    similar_tracks,
+    similar_tracks_v2,
+)
 from app.services import stats as stats_svc
 
 DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
@@ -138,6 +145,210 @@ def api_pipeline_clusters() -> dict:
     return {"ok": True}
 
 
+@app.post("/api/pipeline/lyrics")
+def api_pipeline_lyrics() -> dict:
+    _spawn("lyrics", run_lyrics)
+    return {"ok": True}
+
+
+def _date_str(v) -> str | None:
+    if v is None:
+        return None
+    return v[:10] if isinstance(v, str) else v.date().isoformat()
+
+
+def _f(v: float | None, nd: int = 2) -> float | None:
+    return round(v, nd) if v is not None else None
+
+
+@app.get("/api/tracks")
+def api_tracks(
+    q: str = "",
+    page: int = 1,
+    per_page: int = 200,
+    sort: str = "play_count",
+    order: str = "desc",
+    cluster_id: int | None = None,
+    hidden: bool = False,
+    genre: str = "",
+    language: str = "",
+    instrumental: bool = False,
+) -> dict:
+    import json as _json
+
+    per_page = max(1, min(per_page, 500))
+    page = max(1, page)
+    if sort not in ("play_count", "first_listen", "last_listen"):
+        sort = "play_count"
+    if order not in ("asc", "desc"):
+        order = "desc"
+    conditions = [Track.is_music == (not hidden)]  # noqa: E712
+    term = q.strip().lower()
+    if term:
+        like = f"%{term}%"
+        conditions.append(
+            or_(
+                func.lower(Track.title).like(like),
+                func.lower(Track.channel).like(like),
+            )
+        )
+    if cluster_id is not None:
+        conditions.append(Track.cluster_id == cluster_id)
+    if genre:
+        conditions.append(
+            AudioFeatures.tags.like(f'%"{genre}"%')  # type: ignore[union-attr]
+        )
+    if instrumental:
+        conditions.append(
+            (AudioFeatures.vocal_ratio < settings.lyrics_min_vocal)  # type: ignore[operator]
+        )
+    if language:
+        conditions.append(Lyrics.language == language)
+
+    first_listen = func.min(Listen.listened_at).label("first_listen")
+    last_listen = func.max(Listen.listened_at).label("last_listen")
+    sort_col = {
+        "play_count": Track.play_count,
+        "first_listen": first_listen,
+        "last_listen": last_listen,
+    }[sort]
+    direction = sort_col.desc() if order == "desc" else sort_col.asc()
+
+    with Session(engine) as session:
+        total = session.exec(
+            select(func.count())
+            .select_from(Track)
+            .outerjoin(AudioFeatures, AudioFeatures.track_id == Track.video_id)
+            .outerjoin(Lyrics, Lyrics.track_id == Track.video_id)
+            .where(*conditions)
+        ).one()
+        rows = session.exec(
+            select(Track, first_listen, last_listen, AudioFeatures, Lyrics)
+            .outerjoin(Listen, Listen.track_id == Track.video_id)
+            .outerjoin(AudioFeatures, AudioFeatures.track_id == Track.video_id)
+            .outerjoin(Lyrics, Lyrics.track_id == Track.video_id)
+            .where(*conditions)
+            .group_by(Track.video_id)
+            .order_by(direction, Track.title.asc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        ).all()
+        clusters = {c.id: c.name for c in session.exec(select(Cluster)).all()}
+        tracks = []
+        for t, fl, ll, f, ly in rows:
+            item = {
+                **_track_payload(t),
+                "duration": t.duration,
+                "cluster_id": t.cluster_id,
+                "cluster_name": clusters.get(t.cluster_id, ""),
+                "first_listen": _date_str(fl),
+                "last_listen": _date_str(ll),
+                "music_reason": t.music_reason,
+                "language": ly.language if ly is not None else "",
+                "sentiment": ly.sentiment if ly is not None else None,
+            }
+            if f is not None:
+                item.update(
+                    {
+                        "tempo": _f(f.tempo, 1),
+                        "energy": _f(f.energy),
+                        "danceability": _f(f.danceability),
+                        "acousticness": _f(f.acousticness),
+                        "brightness": _f(f.brightness),
+                        "key": f.key,
+                        "loudness": _f(f.loudness, 1),
+                        "dynamics": _f(f.dynamics),
+                        "percussive": _f(f.percussive),
+                        "mood_happy": _f(f.mood_happy, 3),
+                        "mood_sad": _f(f.mood_sad, 3),
+                        "mood_relaxed": _f(f.mood_relaxed, 3),
+                        "mood_aggressive": _f(f.mood_aggressive, 3),
+                        "mood_epic": _f(f.mood_epic, 3),
+                        "mood_dark": _f(f.mood_dark, 3),
+                        "mood_romantic": _f(f.mood_romantic, 3),
+                        "mood_atmospheric": _f(f.mood_atmospheric, 3),
+                        "features_source": f.source,
+                        "vocal_ratio": _f(f.vocal_ratio, 3),
+                    }
+                )
+                if f.tags:
+                    try:
+                        parsed = _json.loads(f.tags)
+                        item["genres"] = [
+                            g["name"] for g in parsed.get("genres", [])
+                        ]
+                        item["instruments"] = [
+                            g["name"] for g in parsed.get("instruments", [])
+                        ]
+                    except (ValueError, TypeError, KeyError):
+                        pass
+            tracks.append(item)
+        return {
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "tracks": tracks,
+        }
+
+
+@app.get("/api/clusters")
+def api_clusters() -> list[dict]:
+    with Session(engine) as session:
+        clusters = session.exec(
+            select(Cluster).order_by(Cluster.size.desc())
+        ).all()
+        return [
+            {"id": c.id, "name": c.name, "size": c.size} for c in clusters
+        ]
+
+
+@app.post("/api/tracks/{video_id}/classify")
+def api_classify_track(video_id: str, is_music: bool = Body(..., embed=True)) -> dict:
+    with Session(engine) as session:
+        track = session.get(Track, video_id)
+        if track is None:
+            raise HTTPException(404, "Трек не найден")
+        track.is_music = is_music
+        track.music_reason = "manual"
+        session.add(track)
+        session.commit()
+        return {"ok": True, "video_id": video_id, "is_music": is_music}
+
+
+@app.post("/api/channels/hide")
+def api_hide_channel(channel: str = Body(..., embed=True)) -> dict:
+    channel = channel.strip()
+    if not channel:
+        raise HTTPException(400, "Пустое имя канала")
+    with Session(engine) as session:
+        tracks = session.exec(
+            select(Track).where(
+                Track.channel == channel, Track.is_music == True  # noqa: E712
+            )
+        ).all()
+        for t in tracks:
+            t.is_music = False
+            t.music_reason = "manual-not-music"
+            session.add(t)
+        session.commit()
+        return {"ok": True, "channel": channel, "hidden": len(tracks)}
+
+
+@app.get("/api/tracks/{video_id}/lyrics")
+def api_track_lyrics(video_id: str) -> dict:
+    with Session(engine) as session:
+        row = session.get(Lyrics, video_id)
+        if row is None or not row.text:
+            raise HTTPException(404, "Текст не найден")
+        return {
+            "track_id": video_id,
+            "text": row.text,
+            "synced": row.synced,
+            "language": row.language,
+            "sentiment": row.sentiment,
+        }
+
+
 @app.get("/api/dashboard")
 def api_dashboard() -> dict:
     with Session(engine) as session:
@@ -172,13 +383,8 @@ def api_moods() -> dict:
                 }
             )
         totals = stats_svc.totals(session)
-        n_audio = session.exec(
-            select(AudioFeatures.track_id).where(  # type: ignore[arg-type]
-                AudioFeatures.source == "audio"
-            )
-        ).all()
         return {
-            "meta_only": totals["analyzed"] > 0 and not n_audio,
+            "analyzed": totals["analyzed"],
             "cards": cards,
         }
 
@@ -199,23 +405,39 @@ def api_recommendations(track_id: str = "") -> dict:
         mb_artists: list[dict] = []
         mb_error = ""
         mood_name = ""
+        sim_artists: list[dict] | None = None
         if track_id:
             t = session.get(Track, track_id)
             if t is not None:
                 selected = _track_payload(t)
-            similar = [
-                {
-                    "track": _track_payload(s["track"]),
-                    "distance": s["distance"],
-                    "tempo": s["tempo"],
-                }
-                for s in similar_tracks(track_id)
-            ]
+            v2 = similar_tracks_v2(track_id)
+            if v2 is not None:
+                similar = [
+                    {
+                        "track": _track_payload(s["track"]),
+                        "distance": s["distance"],
+                        "tempo": s["tempo"],
+                        "match": s["match"],
+                    }
+                    for s in v2
+                ]
+            else:
+                similar = [
+                    {
+                        "track": _track_payload(s["track"]),
+                        "distance": s["distance"],
+                        "tempo": s["tempo"],
+                        "match": "",
+                    }
+                    for s in similar_tracks(track_id)
+                ]
+            sim_artists = similar_artists(track_id)
             mb_artists, mb_error, mood_name = mb_for_track(track_id)
         return {
             "options": options,
             "selected": selected,
             "similar": similar,
+            "similar_artists": sim_artists,
             "mb_artists": mb_artists,
             "mb_error": mb_error,
             "mood_name": mood_name,
@@ -230,6 +452,8 @@ if DIST_DIR.is_dir():
 
 @app.get("/{full_path:path}")
 def spa(full_path: str):
+    if full_path == "api" or full_path.startswith("api/"):
+        raise HTTPException(404, f"Unknown API route: /{full_path}")
     if DIST_DIR.is_dir():
         dist_root = DIST_DIR.resolve()
         candidate = (DIST_DIR / full_path).resolve()

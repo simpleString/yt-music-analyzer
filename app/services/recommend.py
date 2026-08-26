@@ -1,3 +1,4 @@
+import json
 import time
 
 import httpx
@@ -18,6 +19,10 @@ MOOD_TAGS = {
     "Энергичное": ["electronic", "dance"],
     "Спокойное": ["ambient", "chillout"],
     "Меланхоличное": ["indie", "post-rock"],
+    "Эпичное": ["orchestral", "post-rock"],
+    "Тёмное": ["gothic", "industrial"],
+    "Романтичное": ["acoustic", "chanson"],
+    "Атмосферное": ["ambient", "downtempo"],
 }
 
 _last_call = 0.0
@@ -25,7 +30,224 @@ _cache: dict[str, tuple[float, list[dict]]] = {}
 CACHE_TTL = 86400.0
 
 
-MOOD_COLS = ["mood_happy", "mood_sad", "mood_relaxed", "mood_aggressive"]
+MOOD_COLS = [
+    "mood_happy",
+    "mood_sad",
+    "mood_relaxed",
+    "mood_aggressive",
+    "mood_epic",
+    "mood_dark",
+    "mood_romantic",
+    "mood_atmospheric",
+]
+
+# веса групп фич для похожести v2
+W_TIMBRE = 0.35
+W_RHYTHM = 0.25
+W_HARMONY = 0.25
+W_MACRO = 0.15
+ARTIST_SHRINKAGE = 3.0
+MIN_V2_TRACKS = 2
+
+
+def _parse(v: str | None) -> np.ndarray | None:
+    if not v:
+        return None
+    try:
+        return np.array(json.loads(v), dtype=float)
+    except (ValueError, TypeError):
+        return None
+
+
+def _v2_matrix(
+    session: Session, features: list[AudioFeatures], smooth: bool = True
+) -> tuple[dict[str, dict[str, np.ndarray]], list[AudioFeatures]]:
+    """Строит стандартизованные группы: {группа: {track_id: вектор}}.
+
+    При smooth=True вектор трека сглаживается центроидом его исполнителя
+    (shrinkage α = n/(n+k)) — для рекомендаций; для кластеризации smooth=False.
+    """
+    usable = [
+        f
+        for f in features
+        if f.feat_version >= 2
+        and _parse(f.mfcc) is not None
+        and _parse(f.chroma) is not None
+        and _parse(f.contrast) is not None
+    ]
+    if len(usable) < 2:
+        return {}, usable
+
+    def raw_vec(f: AudioFeatures) -> np.ndarray:
+        mfcc_v = _parse(f.mfcc)
+        chroma_v = _parse(f.chroma)
+        contrast_v = _parse(f.contrast)
+        mfcc = mfcc_v if mfcc_v is not None else np.zeros(26)
+        chroma = chroma_v if chroma_v is not None else np.zeros(12)
+        contrast = contrast_v if contrast_v is not None else np.zeros(7)
+        rhythm = np.array(
+            [
+                np.log1p(f.tempo),
+                f.danceability,
+                f.percussive if f.percussive is not None else 0.5,
+            ]
+        )
+        macro = np.array(
+            [
+                f.energy,
+                f.acousticness,
+                f.brightness,
+                f.dynamics if f.dynamics is not None else 0.0,
+                (f.loudness if f.loudness is not None else -20.0) / 45.0,
+            ]
+        )
+        return np.concatenate([mfcc, chroma, contrast, rhythm, macro])
+
+    # центроиды исполнителей в raw-пространстве (для сглаживания)
+    by_artist: dict[str, list[np.ndarray]] = {}
+    track_artist: dict[str, str] = {}
+    if smooth:
+        for f in usable:
+            row = session.get(Track, f.track_id)
+            if row is not None and row.channel:
+                by_artist.setdefault(row.channel, []).append(raw_vec(f))
+                track_artist[f.track_id] = row.channel
+
+    def smoothed(f: AudioFeatures) -> np.ndarray:
+        v = raw_vec(f)
+        ch = track_artist.get(f.track_id)
+        vecs = by_artist.get(ch, []) if ch else []
+        if len(vecs) < 2:
+            return v
+        centroid = np.mean(vecs, axis=0)
+        n = len(vecs)
+        alpha = n / (n + ARTIST_SHRINKAGE)
+        return alpha * v + (1 - alpha) * centroid
+
+    raw = np.vstack([smoothed(f) for f in usable])
+    scaled = StandardScaler().fit_transform(raw)
+    ids = [f.track_id for f in usable]
+    groups: dict[str, dict[str, np.ndarray]] = {
+        "timbre": dict(zip(ids, scaled[:, 0:26])),
+        "harmony": dict(zip(ids, scaled[:, 26:38])),
+        "rhythm": dict(zip(ids, scaled[:, 38:41])),
+        "macro": dict(zip(ids, scaled[:, 41:46])),
+    }
+    return groups, usable
+
+
+GROUP_LABELS = {
+    "timbre": "по тембру",
+    "rhythm": "по ритму",
+    "harmony": "по гармонии",
+    "macro": "по характеру",
+}
+
+
+def similar_tracks_v2(track_id: str, k: int = 6) -> list[dict] | None:
+    """Взвешенная похожесть по группам фич. None — недостаточно v2-треков."""
+    weights = {
+        "timbre": W_TIMBRE,
+        "rhythm": W_RHYTHM,
+        "harmony": W_HARMONY,
+        "macro": W_MACRO,
+    }
+    with Session(engine) as session:
+        features = session.exec(
+            select(AudioFeatures).where(AudioFeatures.source == "audio")
+        ).all()
+        groups, usable = _v2_matrix(session, features)
+        if len(usable) < MIN_V2_TRACKS or track_id not in groups["timbre"]:
+            return None
+
+        scored: list[tuple[float, AudioFeatures, str]] = []
+        for other in usable:
+            if other.track_id == track_id:
+                continue
+            per_group = {
+                g: float(np.linalg.norm(groups[g][track_id] - groups[g][other.track_id]))
+                for g in weights
+            }
+            total = sum(weights[g] * per_group[g] for g in weights)
+            closest = min(per_group, key=per_group.get)
+            scored.append((total, other, GROUP_LABELS[closest]))
+        scored.sort(key=lambda x: x[0])
+
+        result = []
+        for total, other, label in scored[:k]:
+            t = session.get(Track, other.track_id)
+            if t is None:
+                continue
+            result.append(
+                {
+                    "track": t,
+                    "distance": round(total, 3),
+                    "tempo": other.tempo,
+                    "match": label,
+                }
+            )
+        return result
+
+
+def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
+    """Ближайшие исполнители из истории по центроидам их фич."""
+    with Session(engine) as session:
+        features = session.exec(
+            select(AudioFeatures).where(AudioFeatures.source == "audio")
+        ).all()
+        groups, usable = _v2_matrix(session, features)
+        if len(usable) < MIN_V2_TRACKS or track_id not in groups["timbre"]:
+            return None
+
+        weights = {
+            "timbre": W_TIMBRE,
+            "rhythm": W_RHYTHM,
+            "harmony": W_HARMONY,
+            "macro": W_MACRO,
+        }
+        by_artist: dict[str, list[str]] = {}
+        for f in usable:
+            row = session.get(Track, f.track_id)
+            if row is not None and row.channel:
+                by_artist.setdefault(row.channel, []).append(f.track_id)
+        if len(by_artist) < 2:
+            return None
+
+        def artist_vec(ids: list[str]) -> np.ndarray:
+            return np.mean(
+                [np.concatenate([groups[g][i] for g in weights]) for i in ids], axis=0
+            )
+
+        selected = session.get(Track, track_id)
+        if selected is None or selected.channel not in by_artist:
+            return None
+        sel_vec = artist_vec(by_artist[selected.channel])
+
+        scored: list[tuple[float, str]] = []
+        for ch, ids in by_artist.items():
+            if ch == selected.channel:
+                continue
+            vec = artist_vec(ids)
+            dist = float(np.linalg.norm(sel_vec - vec))
+            scored.append((dist, ch))
+        scored.sort(key=lambda x: x[0])
+
+        result = []
+        for dist, ch in scored[:k]:
+            tracks = session.exec(
+                select(Track).where(Track.channel == ch, Track.is_music == True)  # noqa: E712
+            ).all()
+            plays = sum(t.play_count for t in tracks)
+            result.append(
+                {
+                    "channel": ch,
+                    "distance": round(dist, 3),
+                    "tracks_analyzed": len(by_artist[ch]),
+                    "tracks_total": len(tracks),
+                    "plays": plays,
+                }
+            )
+        return result
 
 
 def similar_tracks(track_id: str, k: int = 4) -> list[dict]:

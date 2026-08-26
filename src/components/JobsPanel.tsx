@@ -16,6 +16,7 @@ const KIND_LABELS: Record<Job["kind"], string> = {
   filter: "Фильтр музыки",
   audio: "Аудио-анализ",
   clusters: "Кластеризация",
+  lyrics: "Тексты песен",
 }
 
 const STATUS_LABELS: Record<JobStatus, string> = {

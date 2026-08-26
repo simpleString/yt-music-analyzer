@@ -13,12 +13,16 @@ class Settings(BaseSettings):
     timezone: str = "Europe/Moscow"
     data_dir: Path = Path("data")
     audio_analysis_limit: int = 5
+    analyze_full_max: int = 300
+    audio_workers: int = 2
     audio_delete_after: bool = False
     cluster_k: int = 0
     mb_user_agent: str = (
         "yt-music-analyzer/1.0 (local personal project; contact: example@example.com)"
     )
     mb_enabled: bool = True
+    lyrics_limit: int = 200
+    lyrics_min_vocal: float = 0.05
     audio_cookies_from_browser: str = "chrome"
     audio_cookies_keyring: str = "basictext"
 

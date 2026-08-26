@@ -1,6 +1,11 @@
 import { useQuery } from "@tanstack/react-query"
 
-export type JobKind = "import" | "filter" | "audio" | "clusters"
+export const TRACKS_PER_PAGE = 200
+
+export type TrackSort = "play_count" | "first_listen" | "last_listen"
+export type SortOrder = "asc" | "desc"
+
+export type JobKind = "import" | "filter" | "audio" | "clusters" | "lyrics"
 export type JobStatus = "pending" | "running" | "done" | "error"
 
 export interface Job {
@@ -30,6 +35,67 @@ export interface AppState {
   audio_limit: number
   root_history_exists: boolean
   root_json_name: string
+}
+
+export interface TrackListItem {
+  video_id: string
+  title: string
+  channel: string
+  play_count: number
+  duration: number | null
+  cluster_id: number | null
+  cluster_name: string
+  first_listen: string | null
+  last_listen: string | null
+  music_reason: string
+  tempo?: number | null
+  energy?: number | null
+  danceability?: number | null
+  acousticness?: number | null
+  brightness?: number | null
+  key?: string
+  loudness?: number | null
+  dynamics?: number | null
+  percussive?: number | null
+  vocal_ratio?: number | null
+  genres?: string[]
+  instruments?: string[]
+  language?: string
+  sentiment?: number | null
+  mood_epic?: number | null
+  mood_dark?: number | null
+  mood_romantic?: number | null
+  mood_atmospheric?: number | null
+  mood_happy?: number | null
+  mood_sad?: number | null
+  mood_relaxed?: number | null
+  mood_aggressive?: number | null
+  features_source?: string
+}
+
+export interface TracksData {
+  total: number
+  page: number
+  per_page: number
+  tracks: TrackListItem[]
+}
+
+export interface TracksParams {
+  q: string
+  page: number
+  sort: TrackSort
+  order: SortOrder
+  clusterId: number | null
+  hidden: boolean
+  genre: string
+  language: string
+  instrumental: boolean
+}
+
+export interface ClusterOption {
+  id: number
+  name: string
+  size: number
 }
 
 export interface TopArtist {
@@ -73,7 +139,7 @@ export interface MoodCard {
 }
 
 export interface MoodsData {
-  meta_only: boolean
+  analyzed: number
   cards: MoodCard[]
 }
 
@@ -87,12 +153,22 @@ export interface SimilarTrack {
   track: TrackInfo
   tempo: number
   distance: number
+  match: string
+}
+
+export interface SimilarArtist {
+  channel: string
+  distance: number
+  tracks_analyzed: number
+  tracks_total: number
+  plays: number
 }
 
 export interface RecommendationsData {
   options: { track: TrackInfo }[]
   selected: TrackInfo | null
   similar: SimilarTrack[]
+  similar_artists: SimilarArtist[] | null
   mb_artists: MbArtist[]
   mb_error: string
   mood_name: string
@@ -104,6 +180,17 @@ async function getJson<T>(url: string): Promise<T> {
     throw new Error((await res.json()).detail ?? res.statusText)
   }
   return res.json() as Promise<T>
+}
+
+async function postJson(url: string, body: object): Promise<void> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    throw new Error((await res.json()).detail ?? res.statusText)
+  }
 }
 
 async function postForm(url: string, form: FormData): Promise<void> {
@@ -127,6 +214,38 @@ export function useStateQuery() {
 }
 
 export const api = {
+  tracks: ({
+    q,
+    page,
+    sort,
+    order,
+    clusterId,
+    hidden,
+    genre,
+    language,
+    instrumental,
+  }: TracksParams) => {
+    const sp = new URLSearchParams({
+      q,
+      page: String(page),
+      per_page: String(TRACKS_PER_PAGE),
+      sort,
+      order,
+    })
+    if (clusterId != null) sp.set("cluster_id", String(clusterId))
+    if (hidden) sp.set("hidden", "true")
+    if (genre) sp.set("genre", genre)
+    if (language) sp.set("language", language)
+    if (instrumental) sp.set("instrumental", "true")
+    return getJson<TracksData>(`/api/tracks?${sp}`)
+  },
+  clusters: () => getJson<ClusterOption[]>("/api/clusters"),
+  classifyTrack: (videoId: string, isMusic: boolean) =>
+    postJson("/api/tracks/" + encodeURIComponent(videoId) + "/classify", {
+      is_music: isMusic,
+    }),
+  hideChannel: (channel: string) =>
+    postJson("/api/channels/hide", { channel }),
   dashboard: () => getJson<DashboardData>("/api/dashboard"),
   moods: () => getJson<MoodsData>("/api/moods"),
   recommendations: (trackId: string) =>
@@ -146,4 +265,9 @@ export const api = {
   runFilter: () => postForm("/api/pipeline/filter", new FormData()),
   runAudio: () => postForm("/api/pipeline/audio", new FormData()),
   runClusters: () => postForm("/api/pipeline/clusters", new FormData()),
+  runLyrics: () => postForm("/api/pipeline/lyrics", new FormData()),
+  trackLyrics: (videoId: string) =>
+    getJson<{ track_id: string; text: string; synced: boolean; language: string; sentiment: number }>(
+      `/api/tracks/${encodeURIComponent(videoId)}/lyrics`
+    ),
 }

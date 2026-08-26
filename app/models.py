@@ -33,13 +33,39 @@ class AudioFeatures(SQLModel, table=True):
     danceability: float = 0.0
     acousticness: float = 0.0
     brightness: float = 0.0
-    mood_happy: float = 0.25
-    mood_sad: float = 0.25
-    mood_relaxed: float = 0.25
-    mood_aggressive: float = 0.25
+    mood_happy: float = 0.125
+    mood_sad: float = 0.125
+    mood_relaxed: float = 0.125
+    mood_aggressive: float = 0.125
+    mood_epic: float = 0.125
+    mood_dark: float = 0.125
+    mood_romantic: float = 0.125
+    mood_atmospheric: float = 0.125
     key: str = ""
     mode_conf: float = 0.5
+    # фичи v2 (feat_version=2): json-массивы и скаляры
+    mfcc: str = ""
+    chroma: str = ""
+    contrast: str = ""
+    dynamics: float | None = None
+    loudness: float | None = None
+    percussive: float | None = None
+    # фичи v3 (YAMNet): теги json и доля вокала
+    tags: str = ""
+    vocal_ratio: float | None = None
+    feat_version: int = 0
     analyzed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Lyrics(SQLModel, table=True):
+    __tablename__ = "lyrics"
+    track_id: str = Field(primary_key=True, foreign_key="track.video_id")
+    text: str = ""
+    synced: bool = False
+    source: str = ""
+    language: str = ""
+    sentiment: float = 0.0
+    fetched_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class Cluster(SQLModel, table=True):

@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom"
 
 import { api } from "@/lib/api"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import {
   Card,
   CardContent,
@@ -46,8 +47,8 @@ export function Recommendations() {
       {data.options.length === 0 ? (
         <Alert>
           <AlertDescription>
-            Нет треков с фичами. Запустите «Кластеризация → плейлисты» (создаст
-            предварительные оценки) или аудио-анализ.
+            Нет треков с аудио-анализом. Запустите «Аудио-анализ» на странице
+            импорта.
           </AlertDescription>
         </Alert>
       ) : (
@@ -56,7 +57,8 @@ export function Recommendations() {
             <CardHeader>
               <CardTitle>Похожие треки</CardTitle>
               <CardDescription>
-                nearest neighbors по вектору фич
+                взвешенная метрика: тембр 35% · ритм 25% · гармония 25% ·
+                характер 15%
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-6">
@@ -96,6 +98,7 @@ export function Recommendations() {
                           <TableHead className="w-10">#</TableHead>
                           <TableHead>Трек</TableHead>
                           <TableHead>BPM</TableHead>
+                          <TableHead>похоже</TableHead>
                           <TableHead>расстояние</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -121,6 +124,13 @@ export function Recommendations() {
                             <TableData className="tabular-nums">
                               {s.tempo || "—"}
                             </TableData>
+                            <TableData>
+                              {s.match ? (
+                                <Badge variant="outline">{s.match}</Badge>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableData>
                             <TableData className="tabular-nums">
                               {s.distance}
                             </TableData>
@@ -138,6 +148,48 @@ export function Recommendations() {
               )}
             </CardContent>
           </Card>
+
+          {data.selected && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Похожие исполнители из вашей истории</CardTitle>
+                <CardDescription>
+                  центроиды фич каналов, сглаженные по количеству треков
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {data.similar_artists === null ? (
+                  <p className="text-muted-foreground text-sm">
+                    Недостаточно аудио-анализа для сравнения исполнителей.
+                  </p>
+                ) : data.similar_artists.length === 0 ? (
+                  <p className="text-muted-foreground text-sm">
+                    Пока только один исполнитель с анализом.
+                  </p>
+                ) : (
+                  <ul className="grid gap-2 md:grid-cols-2">
+                    {data.similar_artists.map((a) => (
+                      <li
+                        key={a.channel}
+                        className="flex items-center justify-between gap-2 rounded-lg border p-3"
+                      >
+                        <span className="min-w-0">
+                          <b className="block truncate text-sm">{a.channel}</b>
+                          <span className="text-muted-foreground text-xs">
+                            {a.tracks_analyzed} из {a.tracks_total} треков
+                            проанализировано · {a.plays} просл.
+                          </span>
+                        </span>
+                        <Badge variant="secondary" className="shrink-0">
+                          {a.distance}
+                        </Badge>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {data.selected && (
             <Card>

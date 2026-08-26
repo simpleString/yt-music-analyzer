@@ -19,6 +19,7 @@ dependencies = [
     "yt-dlp",
     "protobug>=1.0.0",
     "yt-dlp-ejs==0.8.0",
+    "onnxruntime>=1.29.0",
 ]
 
 [tool.uv.sources]

@@ -14,59 +14,111 @@ STRONG_PATTERNS = [
     (r"\bfeat\.?\b|\bft\.?\b|\bпри уч\.", "feat"),
     (r"\bremix\b|\bremaster", "remix"),
     (r"\binstrumental\b|\bcover\b|\bcover-version\b|\bкавер\b", "cover"),
-    (r"\blive\s+(at|в)\b|\bconcert\b|\bконцерт", "live"),
+    (r"\blive\s+(at|on|в)\b|\bconcert\b|\bконцерт", "live"),
     (r"\bаудио\b|\(audio\)|\[audio\]", "audio"),
     (r"^\s*\d{2}\s*[–—-]\s*", "numbered"),
     (r"\bnightcore\b|\bmashup\b|\bbootleg\b|\bmix\b", "edit"),
+    (r"\b(full\s+)?album\b|\bmixtape\b", "album"),
 ]
 STRONG_COMPILED = [(re.compile(p, re.I), name) for p, name in STRONG_PATTERNS]
 DASH_RE = re.compile(r"\s[–—-]\s")
 
 NEGATIVE_RE = re.compile(
     r"сезон|сериал|фильм|эпизод|episode|трейлер|trailer|teaser|обзор|review"
-    r"|gameplay|геймплей|стрим|stream|подкаст|podcast|интервью|interview"
+    r"|gameplay|геймплей|стрим|twitch|подкаст|podcast|интервью|interview"
     r"|пранк|prank|челлендж|challenge|реакци|reaction|смешные|прикол|смешно"
     r"|выпуск|эфир|news|новости|разбор|туториал|tutorial|как\s+сделать"
-    r"|amv|gmв|аниме|anime\s+episode",
+    r"|amv|gmв|аниме|anime\s+episode"
+    # техника и гаджеты
+    r"|наушник|смартфон|айфон|iphone|android|unboxing|распаковк"
+    r"|сравнени|ванплас|oneplus|xiaomi|redmi|samsung|honor\b|huawei"
+    r"|ноутбук|видеокарт|процессор|монитор|умные\s+часы|smartwatch"
+    r"|buds\b|airdots|колонк"
+    # разработка и обучение
+    r"|godot|unity|unreal|python|javascript|typescript|java\b|c\+\+"
+    r"|программи|кодинг|coding|нейросет|chatgpt|gpt-|llm"
+    r"|курс|лекци|урок|lesson|вебинар|gamedev|разработ"
+    r"|vlog|влог|day\s+in\s+(my\s+)?life"
+    r"|top\s*\d|лучшие\s+\w+|vs\b",
     re.I,
 )
 
+# слабые причины: не участвуют в голосовании каналов и переоцениваются
+# при каждом запуске фильтра
+WEAK_REASONS = (
+    "artist-dash",
+    "no-signal",
+    "channel-music",
+    "channel-not-music",
+)
+# что переоценивается при повторном фильтре (слабое + зависящее от паттернов)
+REEVALUATE_REASONS = WEAK_REASONS + ("anti-pattern",)
+
 MUSIC_CATEGORY = 10
-MIN_DURATION = 60
-MAX_DURATION = 600
+# 24/7-радиостримы длятся «вечно» (YouTube отдаёт сотни тысяч часов);
+# всё, что дольше 12 часов, — не отдельный трек
+MAX_TRACK_SECONDS = 12 * 3600
+
+CHANNEL_MIN_SAMPLES = 3
+CHANNEL_MUSIC_SHARE = 0.8
+CHANNEL_NOT_MUSIC_SHARE = 0.2
 
 
 def classify_by_heuristics(title: str, channel: str) -> tuple[bool | None, str]:
-    """Возвращает (is_music, reason). None = не уверены, нужен YouTube API."""
-    reasons: list[str] = []
+    """Возвращает (is_music, reason). None = не уверены, нужен канал/API."""
     ch = (channel or "").lower()
     t = (title or "").strip()
-    if ch.endswith(" - topic") or ch.endswith("- topic"):
-        reasons.append("topic-channel")
-    if "vevo" in ch:
-        reasons.append("vevo")
     tl = t.lower()
+
+    channel_reasons: list[str] = []
+    if ch.endswith(" - topic") or ch.endswith("- topic"):
+        channel_reasons.append("topic-channel")
+    if "vevo" in ch:
+        channel_reasons.append("vevo")
+
+    strong_hits: list[str] = []
     for rx, name in STRONG_COMPILED:
         if rx.search(tl):
-            reasons.append(name)
-    if DASH_RE.search(t):
-        reasons.append("artist-dash")
-    if any(k in ch for k in ("records", "recordings", "label")):
-        reasons.append("label-channel")
+            strong_hits.append(name)
 
-    unique = list(dict.fromkeys(reasons))
-    negative = bool(NEGATIVE_RE.search(tl))
-
-    if negative:
+    if NEGATIVE_RE.search(tl):
         return False, "anti-pattern"
-    if "topic-channel" in unique or "vevo" in unique:
-        return True, "+".join(unique[:3])
-    strong_hits = [r for r in unique if r != "artist-dash"]
-    if len(strong_hits) >= 1:
-        return True, "+".join((strong_hits + unique)[:3])
-    if "artist-dash" in unique:
-        return True, "artist-dash"
+
+    if channel_reasons:
+        return True, "+".join(dict.fromkeys(channel_reasons + strong_hits[:1]))
+    if strong_hits:
+        return True, "+".join(dict.fromkeys(strong_hits[:3]))
+    if is_artist_channel_dash(t, channel or ""):
+        return True, "artist-channel-dash"
+    if is_artist_dash(t):
+        return None, "artist-dash"
     return None, ""
+
+
+def is_artist_dash(title: str) -> bool:
+    """«Артист - Трек»: левая часть короткая, без знаков предложений."""
+    t = (title or "").strip()
+    if not DASH_RE.search(t):
+        return False
+    left = DASH_RE.split(t)[0].strip()
+    if not left or len(left.split()) > 5:
+        return False
+    return not re.search(r"[?!:;…]", left)
+
+
+def is_artist_channel_dash(title: str, channel: str) -> bool:
+    """«Хаски - Пуля» на канале «Хаски»: артист выкладывает свои треки."""
+    t = (title or "").strip()
+    ch = (channel or "").strip()
+    if not t or not ch:
+        return False
+    m = DASH_RE.search(t)
+    if not m:
+        return False
+    left = t[: m.start()].strip()
+    if not left:
+        return False
+    return left.casefold() == ch.casefold()
 
 
 def run_filter() -> None:
@@ -74,21 +126,24 @@ def run_filter() -> None:
         if not jobs.start_job("filter"):
             return
         with Session(engine) as session:
-            stmt = select(Track).where(Track.is_music == None)  # noqa: E711
-            if has_api_key():
-                stmt = select(Track).where(
-                    (Track.is_music == None)  # noqa: E711
-                    | (Track.music_reason == "no-signal")
-                )
+            stmt = select(Track).where(
+                (Track.is_music == None)  # noqa: E711
+                | Track.music_reason.in_(REEVALUATE_REASONS)
+                | (Track.music_reason == "")
+            )
             tracks = session.exec(stmt).all()
             total = len(tracks)
-            jobs.progress("filter", 0, total, f"{total} треков без классификации")
+            jobs.progress("filter", 0, total, f"{total} треков к классификации")
 
-            undecided: list[Track] = []
             n_music = n_not = 0
+
+            # проход 1: уверенные сигналы
+            undecided: list[Track] = []
             for t in tracks:
                 verdict, reason = classify_by_heuristics(t.title, t.channel)
-                if verdict is not None:
+                if verdict is None:
+                    undecided.append(t)
+                else:
                     t.is_music = verdict
                     t.music_reason = reason
                     session.add(t)
@@ -96,11 +151,57 @@ def run_filter() -> None:
                         n_music += 1
                     else:
                         n_not += 1
+            session.commit()
+            jobs.progress(
+                "filter",
+                n_music + n_not,
+                total,
+                f"эвристики: {n_music} музыка / {n_not} не музыка",
+            )
+
+            # голосование по каналу: доля музыки среди уверенных треков канала
+            channel_stats = _channel_music_stats(session)
+
+            def channel_verdict(t: Track) -> bool | None:
+                ch = (t.channel or "").strip()
+                if not ch:
+                    return None
+                stat = channel_stats.get(ch.lower())
+                if stat is None:
+                    return None
+                n, music = stat
+                if n < CHANNEL_MIN_SAMPLES:
+                    return None
+                share = music / n
+                if share >= CHANNEL_MUSIC_SHARE:
+                    return True
+                if share <= CHANNEL_NOT_MUSIC_SHARE:
+                    return False
+                return None
+
+            still_undecided: list[Track] = []
+            n_dash_music = n_dash_not = 0
+            for t in undecided:
+                verdict = channel_verdict(t)
+                if verdict is None:
+                    still_undecided.append(t)
+                    continue
+                t.is_music = verdict
+                t.music_reason = (
+                    "channel-music" if verdict else "channel-not-music"
+                )
+                session.add(t)
+                if verdict:
+                    n_dash_music += 1
                 else:
-                    undecided.append(t)
+                    n_dash_not += 1
             session.commit()
 
-            detail = f"эвристики: {n_music} музыка / {n_not} не музыка"
+            detail = (
+                f"эвристики: {n_music} музыка / {n_not} не музыка; "
+                f"каналы: +{n_dash_music} / −{n_dash_not}"
+            )
+            undecided = still_undecided
             n_api_music = 0
 
             if undecided and has_api_key():
@@ -118,16 +219,16 @@ def run_filter() -> None:
                             t.category_id = info["category_id"]
                         if not t.channel and info.get("channel"):
                             t.channel = info["channel"]
-                        ok = (
-                            info.get("category_id") == MUSIC_CATEGORY
-                            and info.get("duration") is not None
-                            and MIN_DURATION <= info["duration"] <= MAX_DURATION
-                        )
-                        t.is_music = ok
-                        t.music_reason = (
-                            "api:cat10+dur" if ok else "api:not-music"
-                        )
-                        if ok:
+                        dur = info.get("duration")
+                        if info.get("category_id") != MUSIC_CATEGORY:
+                            t.is_music = False
+                            t.music_reason = "api:not-music"
+                        elif dur is not None and dur > MAX_TRACK_SECONDS:
+                            t.is_music = False
+                            t.music_reason = "api:too-long"
+                        else:
+                            t.is_music = True
+                            t.music_reason = "api:cat10"
                             n_api_music += 1
                     session.add(t)
                 session.commit()
@@ -151,3 +252,25 @@ def run_filter() -> None:
     except Exception as exc:  # noqa: BLE001
         jobs.fail_job("filter", f"{type(exc).__name__}: {exc}")
         raise
+
+
+def _channel_music_stats(session: Session) -> dict[str, tuple[int, int]]:
+    """{channel_lower: (n_confident, n_music)} по трекам с уверенными вердиктами.
+
+    Уверенные: topic/vevo/yt-music-app, сильные паттерны, anti-pattern, API и
+    ручные вердикты. Слабые (artist-dash, no-signal, channel-*) не учитываются,
+    чтобы вердикт канала не усиливал сам себя.
+    """
+    rows = session.exec(
+        select(Track.channel, Track.is_music, Track.music_reason)
+    ).all()
+    stats: dict[str, tuple[int, int]] = {}
+    for channel, is_music, reason in rows:
+        if not channel or is_music is None:
+            continue
+        if not reason or reason in WEAK_REASONS:
+            continue
+        key = channel.strip().lower()
+        n, music = stats.get(key, (0, 0))
+        stats[key] = (n + 1, music + (1 if is_music else 0))
+    return stats

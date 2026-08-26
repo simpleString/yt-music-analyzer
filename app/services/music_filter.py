@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 from app.db import engine
 from app.models import Track
 from app.services import jobs
+from app.services.artists import normalize_artist
 from app.services.youtube import fetch_videos_details, has_api_key
 
 STRONG_PATTERNS = [
@@ -228,6 +229,7 @@ def run_filter(stop: threading.Event | None = None) -> None:
                                 t.category_id = info["category_id"]
                             if not t.channel and info.get("channel"):
                                 t.channel = info["channel"]
+                                t.artist_canonical = normalize_artist(t.channel)
                             dur = info.get("duration")
                             if info.get("category_id") != MUSIC_CATEGORY:
                                 t.is_music = False

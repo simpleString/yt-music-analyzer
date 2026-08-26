@@ -1,4 +1,6 @@
-import { useQuery } from "@tanstack/react-query"
+import { useMemo, useState } from "react"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
+import { useNavigate } from "react-router-dom"
 import {
   Bar,
   BarChart,
@@ -11,6 +13,7 @@ import {
 
 import { api } from "@/lib/api"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -22,6 +25,14 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -35,11 +46,73 @@ const chartConfig = {
   listens: { label: "прослушивания" },
 }
 
+type Preset = "all" | "7d" | "30d" | "month" | "year" | "custom"
+
+const PRESET_LABELS: Record<Preset, string> = {
+  all: "Всё время",
+  "7d": "7 дней",
+  "30d": "30 дней",
+  month: "Этот месяц",
+  year: "Этот год",
+  custom: "Свой диапазон",
+}
+
+function toIso(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+}
+
+function presetRange(preset: Preset): { from: string | null; to: string | null } {
+  const today = new Date()
+  switch (preset) {
+    case "7d":
+      return { from: toIso(new Date(Date.now() - 6 * 86400000)), to: toIso(today) }
+    case "30d":
+      return { from: toIso(new Date(Date.now() - 29 * 86400000)), to: toIso(today) }
+    case "month":
+      return {
+        from: toIso(new Date(today.getFullYear(), today.getMonth(), 1)),
+        to: toIso(today),
+      }
+    case "year":
+      return {
+        from: toIso(new Date(today.getFullYear(), 0, 1)),
+        to: toIso(today),
+      }
+    default:
+      return { from: null, to: null }
+  }
+}
+
 export function Dashboard() {
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["dashboard"],
-    queryFn: api.dashboard,
+  const navigate = useNavigate()
+  const [preset, setPreset] = useState<Preset>("all")
+  const [customFrom, setCustomFrom] = useState("")
+  const [customTo, setCustomTo] = useState("")
+  const [granularity, setGranularity] = useState<"month" | "week">("month")
+
+  const range = useMemo(
+    () =>
+      preset === "custom"
+        ? {
+            from: customFrom || null,
+            to: customTo || null,
+          }
+        : presetRange(preset),
+    [preset, customFrom, customTo]
+  )
+
+  const { data, isLoading, isError, isFetching } = useQuery({
+    queryKey: ["dashboard", range.from, range.to, granularity],
+    queryFn: () => api.dashboard({ ...range, granularity }),
+    placeholderData: keepPreviousData,
   })
+
+  const periodLabel =
+    preset === "all"
+      ? ""
+      : preset === "custom"
+        ? [range.from, range.to].filter(Boolean).join(" — ")
+        : PRESET_LABELS[preset]
 
   if (isLoading) return <p className="text-muted-foreground">Загрузка…</p>
   if (isError || !data) return <p>Не удалось загрузить данные.</p>
@@ -50,20 +123,67 @@ export function Dashboard() {
         <h1 className="text-2xl font-semibold tracking-tight">Дашборд</h1>
         <Alert>
           <AlertDescription>
-            Нет данных. Сначала импортируйте историю и запустите фильтр музыки.
+            Нет данных{periodLabel && ` за период (${periodLabel})`}. Сначала
+            импортируйте историю и запустите фильтр музыки.
           </AlertDescription>
         </Alert>
       </div>
     )
   }
 
-  const months = data.by_month.map(([m, v]) => ({ month: m, listens: v }))
+  const timeline = data.timeline.map(([m, v]) => ({ bucket: m, listens: v }))
   const hours = data.by_hour.map(([h, v]) => ({ hour: `${h}:00`, listens: v }))
   const weekdays = data.by_weekday.map(([d, v]) => ({ day: d, listens: v }))
 
   return (
-    <div className="flex flex-col gap-6">
+    <div
+      className={`flex flex-col gap-6 transition-opacity ${
+        isFetching ? "pointer-events-none opacity-60" : ""
+      }`}
+    >
       <h1 className="text-2xl font-semibold tracking-tight">Дашборд</h1>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Select
+          value={preset}
+          onValueChange={(v) => setPreset(v as Preset)}
+        >
+          <SelectTrigger className="w-44">
+            <SelectValue placeholder="Период" />
+          </SelectTrigger>
+          <SelectContent>
+            {(Object.keys(PRESET_LABELS) as Preset[]).map((p) => (
+              <SelectItem key={p} value={p}>
+                {PRESET_LABELS[p]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {preset === "custom" && (
+          <>
+            <Input
+              type="date"
+              className="w-40"
+              value={customFrom}
+              max={customTo || undefined}
+              onChange={(e) => setCustomFrom(e.target.value)}
+            />
+            <span className="text-muted-foreground text-sm">—</span>
+            <Input
+              type="date"
+              className="w-40"
+              value={customTo}
+              min={customFrom || undefined}
+              onChange={(e) => setCustomTo(e.target.value)}
+            />
+          </>
+        )}
+        {periodLabel && (
+          <span className="text-muted-foreground text-sm">
+            Период: {periodLabel}
+          </span>
+        )}
+      </div>
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card>
@@ -75,7 +195,7 @@ export function Dashboard() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">#</TableHead>
-                  <TableHead>Канал</TableHead>
+                  <TableHead>Исполнитель</TableHead>
                   <TableHead>просл.</TableHead>
                   <TableHead>треков</TableHead>
                 </TableRow>
@@ -111,19 +231,16 @@ export function Dashboard() {
               </TableHeader>
               <TableBody>
                 {data.top_tracks.map((t, i) => (
-                  <TableRow key={t.video_id}>
+                  <TableRow
+                    key={t.video_id}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/track/${t.video_id}`)}
+                  >
                     <TableData className="text-muted-foreground tabular-nums">
                       {i + 1}
                     </TableData>
                     <TableData className="max-w-[22rem] truncate">
-                      <a
-                        href={`https://www.youtube.com/watch?v=${t.video_id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="hover:underline"
-                      >
-                        {t.title}
-                      </a>
+                      <span className="hover:underline">{t.title}</span>
                       <span className="text-muted-foreground block truncate text-xs">
                         {t.channel}
                       </span>
@@ -138,18 +255,36 @@ export function Dashboard() {
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Динамика по месяцам</CardTitle>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle>
+            Динамика {granularity === "month" ? "по месяцам" : "по неделям"}
+          </CardTitle>
+          <div className="flex gap-1">
+            <Button
+              size="sm"
+              variant={granularity === "week" ? "default" : "outline"}
+              onClick={() => setGranularity("week")}
+            >
+              Недели
+            </Button>
+            <Button
+              size="sm"
+              variant={granularity === "month" ? "default" : "outline"}
+              onClick={() => setGranularity("month")}
+            >
+              Месяцы
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <ChartContainer
             config={chartConfig}
             className="aspect-auto h-72 w-full"
           >
-            <LineChart data={months}>
+            <LineChart data={timeline}>
               <CartesianGrid vertical={false} />
               <XAxis
-                dataKey="month"
+                dataKey="bucket"
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}

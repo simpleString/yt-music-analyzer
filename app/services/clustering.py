@@ -42,16 +42,6 @@ GROUP_WEIGHTS = {
     "macro": 0.15,
 }
 
-# соответствие mood-тегов AudioSet нашим настроениям
-YAMNET_MOOD_MAP = {
-    "Happy music": "mood_happy",
-    "Sad music": "mood_sad",
-    "Tender music": "mood_romantic",
-    "Exciting music": "mood_epic",
-    "Scary music": "mood_dark",
-}
-YAMNET_BLEND = 0.4
-
 
 def _rankify(values: np.ndarray) -> np.ndarray:
     n = len(values)
@@ -64,42 +54,18 @@ def _rankify(values: np.ndarray) -> np.ndarray:
 
 
 def compute_moods(session: Session, features: list[AudioFeatures]) -> None:
-    """8 настроений на ранговых фичах; тональность ≤35%, YAMNet-примесь 0.4."""
+    """8 настроений из тегов Essentia (mtg_jamendo_moodtheme).
+
+    Скоры уже в 0..1 с доминантой = 1 (нормировка в essentia_tags).
+    Для треков без тегов остаётся равномерный дефолт 0.125.
+    """
     audio = [f for f in features if f.source == "audio"]
     if len(audio) < 2:
         return
 
-    tempo_r = _rankify(np.array([f.tempo for f in audio]))
-    energy_r = _rankify(np.array([f.energy for f in audio]))
-    acoustic_r = _rankify(np.array([f.acousticness for f in audio]))
-    bright_r = _rankify(np.array([f.brightness for f in audio]))
-    dyn_r = _rankify(
-        np.array([f.dynamics if f.dynamics is not None else 0.0 for f in audio])
-    )
-    perc_r = _rankify(
-        np.array(
-            [f.percussive if f.percussive is not None else 0.5 for f in audio]
-        )
-    )
-    key_minor = np.array([1.0 if "minor" in (f.key or "") else 0.0 for f in audio])
-    conf = np.clip(np.array([f.mode_conf for f in audio]), 0.3, 1.0)
-    minor = key_minor * conf
-    major = (1 - key_minor) * conf
-    tempo_mid = 1.0 - np.abs(tempo_r - 0.5) * 2.0
+    n = len(audio)
+    stack = np.full((len(MOOD_COLS), n), 0.125)
 
-    happy = 0.30 * major + 0.30 * tempo_r + 0.20 * energy_r + 0.20 * bright_r
-    sad = 0.30 * minor + 0.25 * (1 - tempo_r) + 0.25 * (1 - energy_r) + 0.20 * acoustic_r
-    relaxed = 0.30 * (1 - energy_r) + 0.25 * acoustic_r + 0.25 * (1 - tempo_r) + 0.20 * (1 - perc_r)
-    aggressive = 0.30 * energy_r + 0.30 * perc_r + 0.20 * (1 - acoustic_r) + 0.20 * minor
-    epic = 0.30 * dyn_r + 0.25 * bright_r + 0.20 * minor + 0.25 * tempo_mid
-    dark = 0.35 * minor + 0.30 * (1 - bright_r) + 0.20 * (1 - acoustic_r) + 0.15 * (1 - perc_r)
-    romantic = 0.30 * acoustic_r + 0.25 * (1 - tempo_r) + 0.25 * (1 - perc_r) + 0.20 * major
-    atmospheric = 0.30 * (1 - perc_r) + 0.25 * (1 - energy_r) + 0.25 * (1 - dyn_r) + 0.20 * (1 - tempo_r)
-
-    stack = np.vstack([happy, sad, relaxed, aggressive, epic, dark, romantic, atmospheric])
-    stack = np.clip(stack, 0.0, None)
-
-    # подмешивание mood-тегов YAMNet (относительные скоры внутри набора)
     for i, f in enumerate(audio):
         if not f.tags:
             continue
@@ -107,23 +73,13 @@ def compute_moods(session: Session, features: list[AudioFeatures]) -> None:
             moods = json.loads(f.tags).get("moods") or {}
         except (ValueError, TypeError):
             continue
-        mapped = {
-            YAMNET_MOOD_MAP[k]: v for k, v in moods.items() if k in YAMNET_MOOD_MAP
-        }
-        if not mapped:
+        vals = [
+            float(moods[c]) for c in MOOD_COLS if moods.get(c) is not None
+        ]
+        if not vals:
             continue
-        top = max(mapped.values())
-        if top < 0.01:
-            continue  # слабый сигнал — не усиливаем шум
-        for mood_key, value in mapped.items():
-            j = MOOD_COLS.index(mood_key)
-            stack[j, i] = (1 - YAMNET_BLEND) * stack[j, i] + YAMNET_BLEND * (
-                value / top
-            )
-
-    denom = stack.sum(axis=0)
-    denom[denom <= 0] = 1.0
-    stack = stack / denom
+        for j, c in enumerate(MOOD_COLS):
+            stack[j, i] = round(float(moods.get(c, 0.0)), 3)
 
     for f, col in zip(audio, stack.T):
         for j, mood_col in enumerate(MOOD_COLS):

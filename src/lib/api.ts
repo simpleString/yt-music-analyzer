@@ -42,6 +42,48 @@ export interface AppState {
   root_json_name: string
 }
 
+export interface TagScore {
+  name: string
+  score: number
+}
+
+export interface TrackDetail {
+  video_id: string
+  title: string
+  channel: string
+  play_count: number
+  duration: number | null
+  cluster_id: number | null
+  cluster_name: string
+  first_listen: string | null
+  last_listen: string | null
+  music_reason: string
+  language: string
+  sentiment: number | null
+  topic: string
+  has_lyrics: boolean
+  genre_scores: TagScore[]
+  instrument_scores: TagScore[]
+  tempo?: number | null
+  energy?: number | null
+  danceability?: number | null
+  acousticness?: number | null
+  brightness?: number | null
+  key?: string
+  loudness?: number | null
+  dynamics?: number | null
+  percussive?: number | null
+  vocal_ratio?: number | null
+  mood_happy?: number | null
+  mood_sad?: number | null
+  mood_relaxed?: number | null
+  mood_aggressive?: number | null
+  mood_epic?: number | null
+  mood_dark?: number | null
+  mood_romantic?: number | null
+  mood_atmospheric?: number | null
+}
+
 export interface TrackListItem {
   video_id: string
   title: string
@@ -103,6 +145,12 @@ export interface ClusterOption {
   size: number
 }
 
+export interface GenreOption {
+  name: string
+  name_ru: string
+  count: number
+}
+
 export interface TopArtist {
   channel: string
   plays: number
@@ -122,7 +170,13 @@ export interface DashboardData {
   top_tracks: TopTrack[]
   by_hour: [string, number][]
   by_weekday: [string, number][]
-  by_month: [string, number][]
+  timeline: [string, number][]
+}
+
+export interface DashboardParams {
+  from: string | null
+  to: string | null
+  granularity: "month" | "week"
 }
 
 export interface ClusterInfo {
@@ -245,13 +299,19 @@ export const api = {
     return getJson<TracksData>(`/api/tracks?${sp}`)
   },
   clusters: () => getJson<ClusterOption[]>("/api/clusters"),
+  genres: () => getJson<GenreOption[]>("/api/genres"),
   classifyTrack: (videoId: string, isMusic: boolean) =>
     postJson("/api/tracks/" + encodeURIComponent(videoId) + "/classify", {
       is_music: isMusic,
     }),
   hideChannel: (channel: string) =>
     postJson("/api/channels/hide", { channel }),
-  dashboard: () => getJson<DashboardData>("/api/dashboard"),
+  dashboard: ({ from, to, granularity }: DashboardParams) => {
+    const sp = new URLSearchParams({ granularity })
+    if (from) sp.set("date_from", from)
+    if (to) sp.set("date_to", to)
+    return getJson<DashboardData>(`/api/dashboard?${sp}`)
+  },
   moods: () => getJson<MoodsData>("/api/moods"),
   recommendations: (trackId: string) =>
     getJson<RecommendationsData>(
@@ -273,6 +333,8 @@ export const api = {
   runLyrics: () => postForm("/api/pipeline/lyrics", new FormData()),
   cancelJob: (kind: string) =>
     postJson(`/api/jobs/${encodeURIComponent(kind)}/cancel`, {}),
+  trackDetail: (videoId: string) =>
+    getJson<TrackDetail>(`/api/tracks/${encodeURIComponent(videoId)}`),
   trackLyrics: (videoId: string) =>
     getJson<{ track_id: string; text: string; synced: boolean; language: string; sentiment: number }>(
       `/api/tracks/${encodeURIComponent(videoId)}/lyrics`

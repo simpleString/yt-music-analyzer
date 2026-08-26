@@ -9,6 +9,7 @@ from app.db import engine
 from app.models import Listen, Track
 from app.parsers.takeout import RawListen, load_history_file, parse_watch_history
 from app.services import jobs
+from app.services.artists import normalize_artist
 
 BATCH = 500
 
@@ -51,6 +52,8 @@ def run_import(filepath: str, stop: threading.Event | None = None) -> None:
                     tracks[e.video_id] = track
                 track.title = e.title or track.title
                 track.channel = e.channel or track.channel
+                if track.channel:
+                    track.artist_canonical = normalize_artist(track.channel)
                 track.header = e.header
                 if e.header == "YouTube Музыка" and track.is_music is None:
                     track.is_music = True

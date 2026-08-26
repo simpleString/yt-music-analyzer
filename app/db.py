@@ -1,4 +1,4 @@
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import SQLModel, Session, create_engine, select
 
 from app.config import settings
 
@@ -49,7 +49,67 @@ def init_db() -> None:
         for col, ddl in migrations.items():
             if col not in cols:
                 conn.execute(text(ddl))
+        track_cols = [r[1] for r in conn.execute(text("PRAGMA table_info(track)"))]
+        if "artist_canonical" not in track_cols:
+            conn.execute(
+                text(
+                    "ALTER TABLE track "
+                    "ADD COLUMN artist_canonical VARCHAR NOT NULL DEFAULT ''"
+                )
+            )
+        lyrics_cols = [r[1] for r in conn.execute(text("PRAGMA table_info(lyrics)"))]
+        if "topics" not in lyrics_cols:
+            conn.execute(
+                text(
+                    "ALTER TABLE lyrics "
+                    "ADD COLUMN topics VARCHAR NOT NULL DEFAULT ''"
+                )
+            )
         conn.commit()
+        _backfill_artists()
+        _backfill_topics()
+
+
+def _backfill_topics() -> None:
+    import json
+
+    from app.models import Lyrics
+    from app.services.topics import extract_topics
+
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Lyrics.track_id, Lyrics.text, Lyrics.language).where(  # type: ignore[arg-type]
+                Lyrics.topics == ""
+            )
+        ).all()
+        for track_id, text, language in rows:
+            row = session.get(Lyrics, track_id)
+            if row is None:
+                continue
+            topics = extract_topics(text, language)
+            if topics:
+                row.topics = json.dumps(topics, ensure_ascii=False)
+                session.add(row)
+        session.commit()
+
+
+def _backfill_artists() -> None:
+    from app.models import Track
+    from app.services.artists import normalize_artist
+
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Track.video_id, Track.channel).where(  # type: ignore[arg-type]
+                Track.artist_canonical == ""
+            )
+        ).all()
+        for video_id, channel in rows:
+            track = session.get(Track, video_id)
+            if track is None:
+                continue
+            track.artist_canonical = normalize_artist(track.channel)
+            session.add(track)
+        session.commit()
 
 
 def get_session() -> Session:

@@ -1,5 +1,6 @@
 import threading
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
@@ -299,6 +300,83 @@ def api_tracks(
         }
 
 
+@app.get("/api/tracks/{video_id}")
+def api_track_detail(video_id: str) -> dict:
+    import json as _json
+
+    from app.services.topics import dominant_topic
+
+    with Session(engine) as session:
+        track = session.get(Track, video_id)
+        if track is None:
+            raise HTTPException(404, "Трек не найден")
+        fl = session.exec(
+            select(func.min(Listen.listened_at), func.max(Listen.listened_at)).where(
+                Listen.track_id == video_id
+            )
+        ).one()
+        f = session.get(AudioFeatures, video_id)
+        ly = session.get(Lyrics, video_id)
+        cluster_name = ""
+        if track.cluster_id is not None:
+            cluster = session.get(Cluster, track.cluster_id)
+            if cluster is not None:
+                cluster_name = cluster.name
+        item = {
+            **_track_payload(track),
+            "duration": track.duration,
+            "cluster_id": track.cluster_id,
+            "cluster_name": cluster_name,
+            "first_listen": _date_str(fl[0]),
+            "last_listen": _date_str(fl[1]),
+            "music_reason": track.music_reason,
+            "language": ly.language if ly is not None else "",
+            "sentiment": ly.sentiment if ly is not None else None,
+            "topic": dominant_topic(ly.topics) if ly is not None else "",
+            "has_lyrics": ly is not None and bool(ly.text),
+            "genre_scores": [],
+            "instrument_scores": [],
+        }
+        if f is not None:
+            item.update(
+                {
+                    "tempo": _f(f.tempo, 1),
+                    "energy": _f(f.energy),
+                    "danceability": _f(f.danceability),
+                    "acousticness": _f(f.acousticness),
+                    "brightness": _f(f.brightness),
+                    "key": f.key,
+                    "loudness": _f(f.loudness, 1),
+                    "dynamics": _f(f.dynamics),
+                    "percussive": _f(f.percussive),
+                    "mood_happy": _f(f.mood_happy, 3),
+                    "mood_sad": _f(f.mood_sad, 3),
+                    "mood_relaxed": _f(f.mood_relaxed, 3),
+                    "mood_aggressive": _f(f.mood_aggressive, 3),
+                    "mood_epic": _f(f.mood_epic, 3),
+                    "mood_dark": _f(f.mood_dark, 3),
+                    "mood_romantic": _f(f.mood_romantic, 3),
+                    "mood_atmospheric": _f(f.mood_atmospheric, 3),
+                    "features_source": f.source,
+                    "vocal_ratio": _f(f.vocal_ratio, 3),
+                }
+            )
+            if f.tags:
+                try:
+                    parsed = _json.loads(f.tags)
+                    item["genre_scores"] = [
+                        {"name": g["name"], "score": g.get("score", 0.0)}
+                        for g in parsed.get("genres", [])
+                    ]
+                    item["instrument_scores"] = [
+                        {"name": g["name"], "score": g.get("score", 0.0)}
+                        for g in parsed.get("instruments", [])
+                    ]
+                except (ValueError, TypeError, KeyError):
+                    pass
+        return item
+
+
 @app.get("/api/clusters")
 def api_clusters() -> list[dict]:
     with Session(engine) as session:
@@ -342,6 +420,68 @@ def api_hide_channel(channel: str = Body(..., embed=True)) -> dict:
         return {"ok": True, "channel": channel, "hidden": len(tracks)}
 
 
+GENRE_RU = {
+    "Blues": "блюз", "Classical": "классика", "Electronic": "электроника",
+    "Folk, World, & Country": "фолк", "Funk / Soul": "фанк/соул",
+    "Hip Hop": "хип-хоп", "Jazz": "джаз", "Latin": "латина",
+    "Non-Music": "не музыка", "Pop": "поп", "Reggae": "регги",
+    "Rock": "рок", "Stage & Screen": "саундтрек",
+    "Ambient": "эмбиент", "House": "хаус", "Techno": "техно",
+    "Trance": "транс", "Drum n Bass": "dnb", "Breakbeat": "брейкс",
+    "Dubstep": "дабстеп", "Synth-pop": "синти-поп", "Electro": "электро",
+    "Deep House": "ди-хаус", "Tech House": "тех-хаус", "Electro House": "электро-хаус",
+    "Experimental": "эксперимент.", "New Age": "нью-эйдж", "Downtempo": "даунтемпо",
+    "IDM": "idm", "Industrial": "индастриал", "Indie Rock": "инди-рок",
+    "Alternative Rock": "альт. рок", "Punk": "панк", "Metal": "метал",
+    "Heavy Metal": "метал", "Death Metal": "дэт-метал", "Black Metal": "блэк-метал",
+    "Hard Rock": "хард-рок", "Prog. Rock": "прог-рок", "Psychedelic Rock": "психоделик",
+    "Hip-Hop": "хип-хоп", "Trap": "трэп", "Boom Bap": "бум-бэп",
+    "R&B": "r&b", "Soul": "соул", "Funk": "фанк", "Disco": "диско",
+    "Ballad": "баллада", "Beatdown": "битдаун", "Hardcore": "хардкор",
+    "Hard Techno": "хард-техно", "Bassline": "басслайн", "Club": "клубная",
+    "Dance": "танцевальная", "Eurodance": "евродэнс", "Chillwave": "чайллвейв",
+    "Vaporwave": "вейпорвейв", "Lo-Fi": "лоу-фай", "Noise": "нойз",
+    "Soundtrack": "саундтрек", "Score": "муз. к кино", "Theme": "тема",
+    "Musical": "мюзикл", "Bossa Nova": "босса-нова", "Jazz-Funk": "джаз-фанк",
+    "Swing": "свинг", "Bluegrass": "блюграсс", "Country": "кантри",
+    "Ska": "ска", "Reggaeton": "реггетон", "Dub": "даб",
+    "Modern Classical": "совр. классика", "Neo-Classical": "неоклассика",
+    "Leftfield": "лефтфилд", "Glitch": "глитч", "Footwork": "футворк",
+    "Garage House": "гараж-хаус", "UK Garage": "ю-кей гараж",
+    "Future Jazz": "фьюче-джаз", "Nu Jazz": "ну-джаз", "Tribal": "трайбл",
+}
+
+
+@app.get("/api/genres")
+def api_genres() -> list[dict]:
+    """Топ-жанры из фактических тегов в БД (для фильтра на главной)."""
+    import json as _json
+
+    with Session(engine) as session:
+        rows = session.exec(
+            select(AudioFeatures.tags).where(  # type: ignore[arg-type]
+                AudioFeatures.tags != ""
+            )
+        ).all()
+    counts: dict[str, int] = {}
+    for tj in rows:
+        try:
+            for g in _json.loads(tj).get("genres", []):
+                counts[g["name"]] = counts.get(g["name"], 0) + 1
+        except (ValueError, TypeError, KeyError):
+            continue
+    result = [
+        {
+            "name": name,
+            "name_ru": GENRE_RU.get(name, name),
+            "count": n,
+        }
+        for name, n in sorted(counts.items(), key=lambda x: -x[1])[:40]
+        if n >= 3
+    ]
+    return result
+
+
 @app.get("/api/tracks/{video_id}/lyrics")
 def api_track_lyrics(video_id: str) -> dict:
     with Session(engine) as session:
@@ -368,16 +508,37 @@ def api_cancel_job(kind: str) -> dict:
 
 
 @app.get("/api/dashboard")
-def api_dashboard() -> dict:
+def api_dashboard(
+    date_from: str | None = None, date_to: str | None = None, granularity: str = "month"
+) -> dict:
+    d_from = _parse_date(date_from, "date_from")
+    d_to = _parse_date(date_to, "date_to")
+    if d_from and d_to and d_from > d_to:
+        raise HTTPException(422, "date_from должен быть раньше date_to")
+    if granularity not in ("month", "week"):
+        raise HTTPException(422, "granularity должен быть month или week")
     with Session(engine) as session:
         return {
-            "totals": stats_svc.totals(session),
-            "top_artists": stats_svc.top_artists(session),
-            "top_tracks": stats_svc.top_tracks(session),
-            "by_hour": stats_svc.by_hour(session),
-            "by_weekday": stats_svc.by_weekday(session),
-            "by_month": stats_svc.by_month(session),
+            "totals": stats_svc.totals(session, d_from, d_to),
+            "top_artists": stats_svc.top_artists(session, date_from=d_from, date_to=d_to),
+            "top_tracks": stats_svc.top_tracks(session, date_from=d_from, date_to=d_to),
+            "by_hour": stats_svc.by_hour(session, d_from, d_to),
+            "by_weekday": stats_svc.by_weekday(session, d_from, d_to),
+            "timeline": (
+                stats_svc.by_month(session, d_from, d_to)
+                if granularity == "month"
+                else stats_svc.by_week(session, d_from, d_to)
+            ),
         }
+
+
+def _parse_date(value: str | None, name: str):
+    if value is None or not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(422, f"{name} должен быть датой в формате YYYY-MM-DD")
 
 
 @app.get("/api/moods")

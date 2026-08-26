@@ -4,7 +4,7 @@ import { Layout } from "@/components/Layout"
 import { Dashboard } from "@/pages/Dashboard"
 import { ImportPage } from "@/pages/Import"
 import { Moods } from "@/pages/Moods"
-import { Recommendations } from "@/pages/Recommendations"
+import { TrackCard } from "@/pages/TrackCard"
 import { Tracks } from "@/pages/Tracks"
 
 export default function App() {
@@ -15,7 +15,7 @@ export default function App() {
         <Route path="import" element={<ImportPage />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="moods" element={<Moods />} />
-        <Route path="recommendations" element={<Recommendations />} />
+        <Route path="track/:videoId" element={<TrackCard />} />
       </Route>
     </Routes>
   )

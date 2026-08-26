@@ -22,7 +22,9 @@ class Settings(BaseSettings):
     )
     mb_enabled: bool = True
     lyrics_limit: int = 200
-    lyrics_min_vocal: float = 0.05
+    # порог доли вокала: YAMNet даёт низкие абсолютные вероятности
+    # («Singing» ~0.004–0.1 у вокальных треков), инструменталы ~0–0.005
+    lyrics_min_vocal: float = 0.3
     audio_cookies_from_browser: str = "chrome"
     audio_cookies_keyring: str = "basictext"
 

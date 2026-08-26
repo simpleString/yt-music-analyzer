@@ -16,6 +16,7 @@ from app.config import settings
 from app.db import engine
 from app.models import AudioFeatures, Track
 from app.services import jobs
+from app.services import essentia_tags
 
 SR = 22050
 ANALYZE_SECONDS = 120.0
@@ -28,112 +29,6 @@ RETRY_SLEEPS = (5.0, 15.0, 30.0)
 ABORT_NET_ERRORS = 10
 POT_URL = "http://127.0.0.1:4416/ping"
 POT_SERVER_JS = settings.data_dir / "tools" / "bgutil-pot-server" / "build" / "main.js"
-
-# --- YAMNet (AudioSet, 521 класс): жанры, инструменты, вокал ---
-YAMNET_DIR = settings.data_dir / "models"
-YAMNET_FILES = ("model.onnx", "model.data", "yamnet_class_map.csv")
-YAMNET_URL = "https://huggingface.co/anchor-flux/yamnet-onnx/resolve/main"
-
-YAMNET_GENRES = (
-    "Rock music", "Pop music", "Hip hop music", "Electronic music",
-    "Heavy metal", "Jazz", "Classical music", "Country music", "Reggae",
-    "Rhythm and blues", "Folk music", "Punk rock", "Disco", "Techno",
-    "House music", "Drum and bass", "Funk", "Soul music", "Ambient music",
-    "Trance music", "Electronic dance music", "Dance music",
-    "Soundtrack music", "Video game music", "Independent music",
-    "New-age music", "Ska", "Swing music", "Opera", "Bluegrass",
-    "Flamenco", "Gospel music", "Rock and roll", "Vocal music",
-)
-YAMNET_INSTRUMENTS = (
-    "Guitar", "Electric guitar", "Acoustic guitar", "Bass guitar", "Piano",
-    "Electric piano", "Drum kit", "Drum machine", "Drum", "Percussion",
-    "Snare drum", "Synthesizer", "Keyboard (musical)", "Organ",
-    "Hammond organ", "Electronic organ", "Violin, fiddle", "Cello",
-    "Double bass", "Brass instrument", "Trumpet", "Trombone", "Saxophone",
-    "Flute", "Clarinet", "Harp", "Banjo", "Ukulele", "Harmonica",
-    "Marimba, xylophone", "Harpsichord", "Mallet percussion",
-)
-YAMNET_VOCAL = (
-    "Singing", "Choir", "Rapping", "Vocal music", "Synthetic singing",
-    "A capella", "Humming", "Child singing", "Yodeling",
-)
-
-_yamnet_session = None
-_yamnet_names: list[str] | None = None
-
-
-def ensure_yamnet() -> bool:
-    """Загружает ONNX-модель и классмап при первом обращении (однократно)."""
-    global _yamnet_session, _yamnet_names
-    if _yamnet_session is not None:
-        return True
-    if not all((YAMNET_DIR / f).exists() for f in YAMNET_FILES):
-        try:
-            YAMNET_DIR.mkdir(parents=True, exist_ok=True)
-            with httpx.Client(timeout=180, follow_redirects=True) as client:
-                for fname in YAMNET_FILES:
-                    resp = client.get(f"{YAMNET_URL}/{fname}")
-                    resp.raise_for_status()
-                    (YAMNET_DIR / fname).write_bytes(resp.content)
-        except Exception:
-            return False
-    if not YAMNET_DIR.joinpath("model.onnx").exists():
-        return False
-    try:
-        import csv as _csv
-
-        import onnxruntime as ort
-
-        _yamnet_session = ort.InferenceSession(
-            str(YAMNET_DIR / "model.onnx"), providers=["CPUExecutionProvider"]
-        )
-        with open(YAMNET_DIR / "yamnet_class_map.csv") as fh:
-            _yamnet_names = [r["display_name"] for r in _csv.DictReader(fh)]
-        return True
-    except Exception:
-        _yamnet_session = None
-        return False
-
-
-def yamnet_tags(y16: np.ndarray) -> dict | None:
-    """Теги трека по сигналу 16 кГц: жанры, инструменты, вокал, mood-скоры."""
-    if not ensure_yamnet():
-        return None
-    names = _yamnet_names or []
-    idx = {n: i for i, n in enumerate(names)}
-    if len(y16) < 16000:
-        y16 = np.pad(y16, (0, 16000 - len(y16)))
-    S = np.abs(librosa.stft(y16, n_fft=512, hop_length=160, win_length=400))
-    mel = librosa.feature.melspectrogram(
-        S=S, sr=16000, n_mels=64, fmin=125, fmax=7500, htk=True, norm=None
-    )
-    logmel = np.log(mel + 0.001)
-    scores: list[np.ndarray] = []
-    for i in range(0, max(1, logmel.shape[1] - 95), 48):
-        patch = logmel[:, i : i + 96].T.astype(np.float32)[None, None]
-        scores.append(_yamnet_session.run(None, {"audio": patch})[0][0])
-    if not scores:
-        return None
-    probs = 1.0 / (1.0 + np.exp(-np.mean(scores, axis=0)))
-
-    def top(pool: tuple[str, ...], k: int) -> list[dict]:
-        scored = [(n, float(probs[idx[n]])) for n in pool if n in idx]
-        scored.sort(key=lambda x: -x[1])
-        return [{"name": n, "score": round(s, 3)} for n, s in scored[:k]]
-
-    vocal = max((float(probs[idx[n]]) for n in YAMNET_VOCAL if n in idx), default=0.0)
-    moods = {
-        n: round(float(probs[idx[n]]), 3)
-        for n in ("Happy music", "Sad music", "Tender music", "Exciting music", "Scary music")
-        if n in idx
-    }
-    return {
-        "genres": top(YAMNET_GENRES, 3),
-        "instruments": top(YAMNET_INSTRUMENTS, 4),
-        "moods": moods,
-        "vocal_ratio": round(min(vocal, 1.0), 3),
-    }
-
 
 NETWORK_ERROR_MARKERS = (
     "ssl",
@@ -313,6 +208,9 @@ def analyze_audio(path: Path) -> dict:
     duration = len(y) / sr
     if duration < MIN_SECONDS:
         raise ValueError("аудио слишком короткое")
+    # полная длительность файла: probe точен; если не прочитался —
+    # загружали без cap, значит duration и есть полная длина
+    file_duration = float(probe) if probe is not None else duration
 
     rms_frame = librosa.feature.rms(y=y)
     rms = float(rms_frame.mean())
@@ -356,9 +254,9 @@ def analyze_audio(path: Path) -> dict:
     h_e = float(np.sqrt((y_harm * y_harm).mean()))
     percussive = float(p_e / (p_e + h_e + 1e-9))
 
-    # YAMNet: жанры, инструменты, вокал (на 16 кГц, первые 60 с)
+    # Essentia (Discogs-EffNet + головы): жанры, инструменты, настроения, вокал
     y16 = librosa.resample(y, orig_sr=sr, target_sr=16000)[: 16000 * 60]
-    tags = yamnet_tags(y16)
+    tags = essentia_tags.analyze(y16)
 
     # энергия из дБ-шкалы: -45 дБ → 0, 0 дБ → 1 (без клипа в потолок)
     energy = float(np.clip((loudness + 45.0) / 45.0, 0.0, 1.0))
@@ -380,6 +278,7 @@ def analyze_audio(path: Path) -> dict:
         "key": key,
         "mode_conf": round(mode_conf, 3),
         "analyzed_duration": round(duration, 1),
+        "file_duration": round(file_duration, 1),
         "mfcc": json.dumps([round(float(v), 4) for v in mfcc_vec]),
         "chroma": json.dumps([round(float(v), 4) for v in chroma_vec]),
         "contrast": json.dumps([round(float(v), 4) for v in contrast_vec]),
@@ -470,6 +369,11 @@ def _save_features(track_id: str, feats: dict) -> None:
         row.vocal_ratio = feats["vocal_ratio"]
         row.feat_version = FEAT_VERSION
         session.add(row)
+        # длительность трека из реального аудио, если ещё неизвестна
+        track = session.get(Track, track_id)
+        if track is not None and not track.duration and feats.get("file_duration"):
+            track.duration = feats["file_duration"]
+            session.add(track)
         session.commit()
 
 

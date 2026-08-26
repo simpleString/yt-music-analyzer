@@ -1,4 +1,5 @@
 import difflib
+import json
 import re
 import threading
 import time
@@ -11,14 +12,29 @@ from app.config import settings
 from app.db import engine
 from app.models import AudioFeatures, Lyrics, Track
 from app.services import jobs
+from app.services.topics import extract_topics
 
 LRCLIB_SEARCH = "https://lrclib.net/api/search"
 MIN_MATCH_RATIO = 0.6
 
 TITLE_JUNK_RE = re.compile(
-    r"[([](official|lyrics?|audio|video|visualizer|remaster\w*|hd|hq|4k|mv"
-    r"|explicit|clean|full version|version|premiere|премьера)[^)\]]*[)\]]",
+    r"[([](official|lyrics?|lyric|audio|video|visualizer|remaster\w*|hd|hq|4k|mv"
+    r"|explicit|clean|full version|version|premiere|премьера|официальн\w*"
+    r"|live|session|studio|parody|пароди\w*|cover|кавер|remix|ремикс|radio edit"
+    r"|outro|intro|bonus|re-?upload|reupload|full|tv anime|anime|amv"
+    r"|[^)\]]*20\d{2}[^)\]]*)[^)\]]*[)\]]",
     re.I,
+)
+# «| Live From ...» — хвост после вертикальной черты с концертными маркерами
+PIPE_TAIL_RE = re.compile(
+    r"\s*[\|/]\s*(live|session|studio|from|official|version|edit|remix).*$", re.I
+)
+# ведущий номер трека: «23. », «6. », «07 - », «Track 3»
+TRACK_NUM_RE = re.compile(r"^\s*(track\s*)?\d{1,2}[\s.\-_]+\s*", re.I)
+# аниме/фандом-скобки: 【...】〖...〗｢...｣ и хвост после « × » (с пробелами,
+# чтобы не рубить слова с латинской x вроде «Oxxxymiron»)
+CJK_BRACKETS_RE = re.compile(
+    r"[【〖｢\[][^】〗｣\]]{0,50}[】〗｣\]]|\s+[×x]\s+.*$"
 )
 FEAT_RE = re.compile(r"\s*[([]?\s*(feat\.?|ft\.?|featuring|при уч\.)\s.*$", re.I)
 
@@ -47,12 +63,23 @@ EN_NEG = (
 def _clean_title(title: str) -> tuple[str, str]:
     """«Artist - Song (Official Video)» → (artist_guess, song)."""
     t = TITLE_JUNK_RE.sub("", title or "")
-    t = FEAT_RE.sub("", t).strip()
+    t = CJK_BRACKETS_RE.sub("", t)
+    t = PIPE_TAIL_RE.sub("", t)
+    t = " ".join(t.split()).strip(" -|")
     artist = ""
     song = t
     if " - " in t:
         parts = t.split(" - ", 1)
         artist, song = parts[0].strip(), parts[1].strip()
+    # feat-хвосты и ведущие номера — уже после разделения на артиста/песню
+    song = FEAT_RE.sub("", song).strip()
+    song = TRACK_NUM_RE.sub("", song).strip()
+    artist = FEAT_RE.sub("", artist).strip()
+    # «Кожура/Я всё решу» — двойное название, берём первую часть
+    if "/" in song and len(song.split("/")) == 2:
+        first = song.split("/", 1)[0].strip()
+        if 3 <= len(first) <= 60:
+            song = first
     return artist, song
 
 
@@ -111,11 +138,9 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-zа-яё0-9 ]", "", (s or "").lower()).strip()
 
 
-def _fetch_lyrics(track: Track, client: httpx.Client) -> Lyrics | None:
-    artist_guess, song = _clean_title(track.title)
-    artist = _artist_from_channel(track.channel) or artist_guess
-    if not song:
-        return None
+def _lrclib_search(
+    song: str, artist: str, client: httpx.Client
+) -> list[dict]:
     _throttle()
     try:
         resp = client.get(
@@ -123,9 +148,29 @@ def _fetch_lyrics(track: Track, client: httpx.Client) -> Lyrics | None:
             params={"track_name": song[:120], "artist_name": artist[:120]},
         )
         resp.raise_for_status()
-        hits = resp.json()
+        return resp.json()
     except (httpx.HTTPError, ValueError):
+        return []
+
+
+def _fetch_lyrics(track: Track, client: httpx.Client) -> Lyrics | None:
+    artist_guess, song = _clean_title(track.title)
+    artist = _artist_from_channel(track.channel) or artist_guess
+    if not song:
         return None
+    hits = _lrclib_search(song, artist, client)
+    if not hits and artist and artist != artist_guess and artist_guess:
+        # канал мог быть неточным (лейбл, лайв-канал) — пробуем артиста из названия
+        hits = _lrclib_search(song, artist_guess, client)
+    if not hits:
+        # последний шанс: только по названию песни
+        _throttle()
+        try:
+            resp = client.get(LRCLIB_SEARCH, params={"track_name": song[:120]})
+            resp.raise_for_status()
+            hits = resp.json()
+        except (httpx.HTTPError, ValueError):
+            hits = []
     best, best_ratio = None, 0.0
     target = _norm(f"{artist} {song}")
     for hit in hits[:8]:
@@ -134,17 +179,28 @@ def _fetch_lyrics(track: Track, client: httpx.Client) -> Lyrics | None:
         if ratio > best_ratio:
             best, best_ratio = hit, ratio
     if best is None or best_ratio < MIN_MATCH_RATIO:
+        # без артиста в таргете — совпадение только названия
+        target_song = _norm(song)
+        for hit in hits[:8]:
+            candidate = _norm(hit.get("trackName", ""))
+            ratio = difflib.SequenceMatcher(None, target_song, candidate).ratio()
+            if ratio > best_ratio:
+                best, best_ratio = hit, ratio
+    if best is None or best_ratio < MIN_MATCH_RATIO:
         return None
     text = best.get("plainLyrics") or ""
     if not text:
         return None
+    language = detect_language(text)
+    topics = extract_topics(text, language)
     return Lyrics(
         track_id=track.video_id,
         text=text,
         synced=bool(best.get("syncedLyrics")),
         source="lrclib",
-        language=detect_language(text),
+        language=language,
         sentiment=sentiment_score(text),
+        topics=json.dumps(topics, ensure_ascii=False) if topics else "",
         fetched_at=datetime.utcnow(),
     )
 

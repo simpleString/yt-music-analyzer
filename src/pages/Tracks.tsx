@@ -7,7 +7,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { Link } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import {
   ArrowDown,
   ArrowUp,
@@ -68,55 +68,6 @@ function formatDuration(seconds: number | null): string {
   return `${m}:${String(s).padStart(2, "0")}`
 }
 
-const GENRE_OPTIONS = [
-  "Rock music",
-  "Pop music",
-  "Hip hop music",
-  "Electronic music",
-  "Heavy metal",
-  "Jazz",
-  "Classical music",
-  "Folk music",
-  "Punk rock",
-  "Techno",
-  "House music",
-  "Drum and bass",
-  "Funk",
-  "Ambient music",
-  "Trance music",
-  "Soundtrack music",
-]
-
-function genreRu(name: string): string {
-  const map: Record<string, string> = {
-    "Rock music": "рок",
-    "Pop music": "поп",
-    "Hip hop music": "хип-хоп",
-    "Electronic music": "электроника",
-    "Heavy metal": "метал",
-    Jazz: "джаз",
-    "Classical music": "классика",
-    "Folk music": "фолк",
-    "Punk rock": "панк",
-    Techno: "техно",
-    "House music": "хаус",
-    "Drum and bass": "dnb",
-    Funk: "фанк",
-    "Ambient music": "эмбиент",
-    "Trance music": "транс",
-    "Soundtrack music": "саундтрек",
-    "Rhythm and blues": "r&b",
-    Reggae: "регги",
-    "Soul music": "соул",
-    Disco: "диско",
-    Opera: "опера",
-    "Vocal music": "вокал",
-    "Dance music": "танц.",
-    "Video game music": "игры",
-  }
-  return map[name] ?? name
-}
-
 const LANG_OPTIONS = [
   { value: "ru", label: "русский" },
   { value: "en", label: "английский" },
@@ -136,7 +87,7 @@ function techTooltip(t: TrackListItem): string {
     if (t.vocal_ratio != null)
       parts.push(`вокал: ${Math.round(t.vocal_ratio * 100)}%`)
     if (t.genres?.length)
-      parts.push(`жанр: ${t.genres.map(genreRu).join(", ")}`)
+      parts.push(`жанр: ${t.genres.join(", ")}`)
     if (t.instruments?.length)
       parts.push(`инструменты: ${t.instruments.join(", ")}`)
     const moods = [
@@ -165,6 +116,7 @@ const SORT_COLUMNS: { key: TrackSort; label: string; align?: "right" }[] = [
 ]
 
 export function Tracks() {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [input, setInput] = useState("")
   const [q, setQ] = useState("")
@@ -185,6 +137,13 @@ export function Tracks() {
     queryKey: ["clusters"],
     queryFn: api.clusters,
   })
+  const { data: genres } = useQuery({
+    queryKey: ["genres"],
+    queryFn: api.genres,
+    staleTime: 5 * 60 * 1000,
+  })
+  const genreLabel = (name: string): string =>
+    genres?.find((g) => g.name === name)?.name_ru ?? name
 
   const {
     data,
@@ -329,9 +288,9 @@ export function Tracks() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="any">Любой жанр</SelectItem>
-            {GENRE_OPTIONS.map((g) => (
-              <SelectItem key={g} value={g}>
-                {genreRu(g)}
+            {(genres ?? []).map((g) => (
+              <SelectItem key={g.name} value={g.name}>
+                {g.name_ru} ({g.count})
               </SelectItem>
             ))}
           </SelectContent>
@@ -473,10 +432,18 @@ export function Tracks() {
                     }}
                     className={cn(
                       GRID,
-                      "hover:bg-muted/50 border-b border-transparent",
+                      "hover:bg-muted/50 cursor-pointer border-b border-transparent",
                       vi.index % 2 === 1 && "bg-muted/20"
                     )}
                     title={techTooltip(t)}
+                    onClick={(e) => {
+                      if (
+                        e.target instanceof HTMLElement &&
+                        (e.target.closest("a") || e.target.closest("button"))
+                      )
+                        return
+                      navigate(`/track/${t.video_id}`)
+                    }}
                   >
                     <span className="text-muted-foreground tabular-nums">
                       {vi.index + 1}
@@ -516,7 +483,7 @@ export function Tracks() {
                       )}
                       {t.genres?.[0] && (
                         <Badge variant="secondary" className="font-normal">
-                          {genreRu(t.genres[0])}
+                          {genreLabel(t.genres[0])}
                           {t.language ? ` · ${t.language}` : ""}
                         </Badge>
                       )}

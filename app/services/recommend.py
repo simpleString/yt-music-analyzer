@@ -1,15 +1,17 @@
 import json
+import math
 import time
 
 import httpx
 import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 from sqlmodel import Session, select
 
 from app.config import settings
 from app.db import engine
-from app.models import AudioFeatures, Cluster, Track
+from app.models import AudioFeatures, Cluster, Lyrics, Track
 
 MB_API = "https://musicbrainz.org/ws/2/artist"
 MIN_INTERVAL = 1.1
@@ -42,10 +44,14 @@ MOOD_COLS = [
 ]
 
 # веса групп фич для похожести v2
-W_TIMBRE = 0.35
-W_RHYTHM = 0.25
-W_HARMONY = 0.25
-W_MACRO = 0.15
+W_TIMBRE = 0.25
+W_RHYTHM = 0.15
+W_HARMONY = 0.15
+W_MACRO = 0.10
+W_INSTRUMENTS = 0.10
+W_GENRE = 0.10
+W_LYRICS = 0.075
+W_TOPICS = 0.075
 ARTIST_SHRINKAGE = 3.0
 MIN_V2_TRACKS = 2
 
@@ -141,16 +147,128 @@ GROUP_LABELS = {
     "rhythm": "по ритму",
     "harmony": "по гармонии",
     "macro": "по характеру",
+    "instruments": "по инструментам",
+    "genre": "по жанру",
+    "lyrics": "по тексту",
+    "topics": "по темам",
 }
+
+# размерности векторных групп (для нормализации масштаба L2-расстояний)
+GROUP_DIMS = {"timbre": 26, "harmony": 12, "rhythm": 3, "macro": 5}
+
+
+def _parse_tags(tags_json: str | None) -> tuple[dict[str, float], dict[str, float]]:
+    """(вектор жанров, вектор инструментов) из Essentia tags json."""
+    if not tags_json:
+        return {}, {}
+    try:
+        data = json.loads(tags_json)
+    except ValueError:
+        return {}, {}
+    genres = {g["name"]: float(g.get("score", 0.0)) for g in data.get("genres", [])}
+    instruments = {
+        g["name"]: float(g.get("score", 0.0)) for g in data.get("instruments", [])
+    }
+    return genres, instruments
+
+
+def _cosine_dist(a: dict[str, float], b: dict[str, float]) -> float | None:
+    """Косинусное расстояние между разреженными векторами-словарями."""
+    if not a or not b:
+        return None
+    dot = sum(v * b.get(k, 0.0) for k, v in a.items())
+    na = math.sqrt(sum(v * v for v in a.values()))
+    nb = math.sqrt(sum(v * v for v in b.values()))
+    if na == 0.0 or nb == 0.0:
+        return None
+    return 1.0 - dot / (na * nb)
+
+
+def _load_semantic(
+    session: Session, ids: list[str]
+) -> tuple[
+    dict[str, dict[str, float]],
+    dict[str, dict[str, float]],
+    dict[str, dict[str, float]],
+    dict[str, object],
+]:
+    """Теговые и текстовые данные треков.
+
+    Возвращает (genres, instruments, topics, tfidf):
+    genres/instruments/topics — {track_id: вектор-словарь};
+    tfidf — {track_id: нормированный разреженный вектор текста}.
+    """
+    genres: dict[str, dict[str, float]] = {}
+    instruments: dict[str, dict[str, float]] = {}
+    topics: dict[str, dict[str, float]] = {}
+    texts_by_lang: dict[str, dict[str, str]] = {}
+    id_set = set(ids)
+    for f in session.exec(
+        select(AudioFeatures.track_id, AudioFeatures.tags).where(  # type: ignore[arg-type]
+            AudioFeatures.track_id.in_(id_set)  # type: ignore[union-attr]
+        )
+    ).all():
+        g, i = _parse_tags(f[1])
+        if g:
+            genres[f[0]] = g
+        if i:
+            instruments[f[0]] = i
+    for row in session.exec(
+        select(Lyrics.track_id, Lyrics.language, Lyrics.topics, Lyrics.text).where(  # type: ignore[arg-type]
+            Lyrics.track_id.in_(id_set)  # type: ignore[union-attr]
+        )
+    ).all():
+        tid, lang, topics_json, text = row
+        if topics_json:
+            try:
+                vec = json.loads(topics_json)
+                if vec:
+                    topics[tid] = {k: float(v) for k, v in vec.items()}
+            except ValueError:
+                pass
+        if text:
+            texts_by_lang.setdefault(lang or "en", {})[tid] = text
+
+    tfidf: dict[str, object] = {}
+    for lang, texts in texts_by_lang.items():
+        if len(texts) < 2:
+            continue
+        try:
+            matrix = TfidfVectorizer(max_features=20000).fit_transform(
+                texts.values()
+            )
+        except ValueError:
+            continue
+        # TfidfVectorizer по умолчанию даёт L2-нормированные строки
+        for tid, row_idx in zip(texts.keys(), range(matrix.shape[0])):
+            tfidf[tid] = matrix[row_idx]
+    return genres, instruments, topics, tfidf
+
+
+def _tfidf_dist(tfidf: dict[str, object], a: str, b: str) -> float | None:
+    """Косинусное расстояние текстов (только одинаковый корпус = язык)."""
+    va, vb = tfidf.get(a), tfidf.get(b)
+    if va is None or vb is None or va.shape != vb.shape:
+        return None
+    return float(1.0 - va.multiply(vb).sum())
 
 
 def similar_tracks_v2(track_id: str, k: int = 6) -> list[dict] | None:
-    """Взвешенная похожесть по группам фич. None — недостаточно v2-треков."""
+    """Взвешенная похожесть по группам фич + теги/тексты/темы.
+
+    None — недостаточно v2-треков. Группы участвуют в скоре пары только
+    если данные есть у обоих треков; общий скор нормируется на сумму
+    весов доступных групп (треки без текстов не штрафуются).
+    """
     weights = {
         "timbre": W_TIMBRE,
         "rhythm": W_RHYTHM,
         "harmony": W_HARMONY,
         "macro": W_MACRO,
+        "instruments": W_INSTRUMENTS,
+        "genre": W_GENRE,
+        "lyrics": W_LYRICS,
+        "topics": W_TOPICS,
     }
     with Session(engine) as session:
         features = session.exec(
@@ -159,18 +277,43 @@ def similar_tracks_v2(track_id: str, k: int = 6) -> list[dict] | None:
         groups, usable = _v2_matrix(session, features)
         if len(usable) < MIN_V2_TRACKS or track_id not in groups["timbre"]:
             return None
+        ids = [f.track_id for f in usable]
+        genres, instruments, topics, tfidf = _load_semantic(session, ids)
+
+        def pair_distance(other_id: str) -> tuple[float | None, str]:
+            """(общий скор, ближайшая группа); None — нет общих групп."""
+            per_group: dict[str, float] = {}
+            for g, dim in GROUP_DIMS.items():
+                # L2 по стандартизованным фичам, нормированный на размерность,
+                # чтобы масштаб был сопоставим с косинусными расстояниями 0..2
+                d = float(np.linalg.norm(groups[g][track_id] - groups[g][other_id]))
+                per_group[g] = d / math.sqrt(dim)
+            for g, vecs in (
+                ("instruments", instruments),
+                ("genre", genres),
+                ("topics", topics),
+            ):
+                d = _cosine_dist(vecs.get(track_id), vecs.get(other_id))  # type: ignore[arg-type]
+                if d is not None:
+                    per_group[g] = d
+            d = _tfidf_dist(tfidf, track_id, other_id)
+            if d is not None:
+                per_group["lyrics"] = d
+            if not per_group:
+                return None, ""
+            w_sum = sum(weights[g] for g in per_group)
+            total = sum(weights[g] * per_group[g] for g in per_group) / w_sum
+            closest = min(per_group, key=per_group.get)
+            return total, closest
 
         scored: list[tuple[float, AudioFeatures, str]] = []
         for other in usable:
             if other.track_id == track_id:
                 continue
-            per_group = {
-                g: float(np.linalg.norm(groups[g][track_id] - groups[g][other.track_id]))
-                for g in weights
-            }
-            total = sum(weights[g] * per_group[g] for g in weights)
-            closest = min(per_group, key=per_group.get)
-            scored.append((total, other, GROUP_LABELS[closest]))
+            total, label = pair_distance(other.track_id)
+            if total is None:
+                continue
+            scored.append((total, other, GROUP_LABELS[label]))
         scored.sort(key=lambda x: x[0])
 
         result = []

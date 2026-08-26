@@ -8,6 +8,7 @@ class Track(SQLModel, table=True):
     video_id: str = Field(primary_key=True)
     title: str = ""
     channel: str = ""
+    artist_canonical: str = ""
     header: str = ""
     duration: float | None = None
     category_id: int | None = None
@@ -50,7 +51,7 @@ class AudioFeatures(SQLModel, table=True):
     dynamics: float | None = None
     loudness: float | None = None
     percussive: float | None = None
-    # фичи v3 (YAMNet): теги json и доля вокала
+    # фичи v3 (Essentia): теги json и доля вокала
     tags: str = ""
     vocal_ratio: float | None = None
     feat_version: int = 0
@@ -65,6 +66,7 @@ class Lyrics(SQLModel, table=True):
     source: str = ""
     language: str = ""
     sentiment: float = 0.0
+    topics: str = ""
     fetched_at: datetime = Field(default_factory=datetime.utcnow)
 
 

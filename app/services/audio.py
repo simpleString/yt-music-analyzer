@@ -9,6 +9,7 @@ import httpx
 import librosa
 import numpy as np
 import yt_dlp
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.config import settings
@@ -395,10 +396,14 @@ def _is_network_error(msg: str) -> bool:
     return any(k in m for k in NETWORK_ERROR_MARKERS)
 
 
-def download_audio_retried(video_id: str) -> tuple[Path | None, str]:
+def download_audio_retried(
+    video_id: str, stop: threading.Event | None = None
+) -> tuple[Path | None, str]:
     """Скачивание с ретраями (только сетевые ошибки): попытки через 5/15/30 с."""
     last = ""
     for sleep_s in (0.0,) + RETRY_SLEEPS:
+        if stop is not None and stop.is_set():
+            return None, "отменено пользователем"
         if sleep_s:
             time.sleep(sleep_s)
         path, err = download_audio(video_id)
@@ -411,16 +416,18 @@ def download_audio_retried(video_id: str) -> tuple[Path | None, str]:
 
 
 def _download_and_analyze(
-    video_id: str, abort: threading.Event
+    video_id: str, abort: threading.Event, stop: threading.Event
 ) -> tuple[str, dict | None, str]:
     """Воркер: скачивание + анализ без записи в БД (потокобезопасно).
 
     Возвращает (статус, фичи, ошибка): ok | skipped | dl-error | an-error.
     """
-    if abort.is_set():
+    if abort.is_set() or stop.is_set():
         return "skipped", None, ""
-    path, dl_error = download_audio_retried(video_id)
+    path, dl_error = download_audio_retried(video_id, stop)
     if path is None:
+        if stop.is_set():
+            return "skipped", None, ""
         return "dl-error", None, dl_error
     try:
         feats = analyze_audio(path)
@@ -466,10 +473,11 @@ def _save_features(track_id: str, feats: dict) -> None:
         session.commit()
 
 
-def run_audio_analysis() -> None:
+def run_audio_analysis(stop: threading.Event | None = None) -> None:
     try:
         if not jobs.start_job("audio"):
             return
+        stop = stop if stop is not None else threading.Event()
         limit = settings.audio_analysis_limit
         workers = max(1, min(settings.audio_workers, MAX_WORKERS))
         pot_note = ensure_pot_server()
@@ -480,13 +488,11 @@ def run_audio_analysis() -> None:
                 .order_by(Track.play_count.desc())
             )
             tracks = session.exec(stmt).all()
-            already = len(
-                session.exec(
-                    select(AudioFeatures.track_id).where(  # type: ignore[arg-type]
-                        AudioFeatures.source == "audio"
-                    )
-                ).all()
-            )
+            already = session.exec(
+                select(func.count()).select_from(AudioFeatures).where(
+                    AudioFeatures.source == "audio"
+                )
+            ).one()
             candidates = [
                 (t.video_id, t.title)
                 for t in tracks
@@ -519,14 +525,21 @@ def run_audio_analysis() -> None:
                 max_workers=workers, thread_name_prefix="audio"
             ) as pool:
                 futures = {
-                    pool.submit(_download_and_analyze, vid, abort): (vid, title)
+                    pool.submit(_download_and_analyze, vid, abort, stop): (
+                        vid,
+                        title,
+                    )
                     for vid, title in candidates
                 }
                 pending = set(futures)
                 done_count = 0
                 while pending:
+                    # кросс-процессная отмена: флаг в БД → локальные события
+                    if not stop.is_set() and jobs.should_stop("audio", stop):
+                        stop.set()
+                        abort.set()
                     completed, pending = wait(
-                        pending, return_when=FIRST_COMPLETED
+                        pending, return_when=FIRST_COMPLETED, timeout=5.0
                     )
                     for fut in completed:
                         vid, title = futures[fut]
@@ -580,6 +593,9 @@ def run_audio_analysis() -> None:
             f"проанализировано {ok}, ошибок {failed}, пропущено {skipped} "
             f"(всего в БД: {already + ok}; воркеров: {workers})"
         )
+        if jobs.should_stop("audio", stop):
+            jobs.stop_job("audio", detail=f"{detail}; остановлено пользователем")
+            return
         if aborted:
             detail += (
                 f"; остановлено: {ABORT_NET_ERRORS} сетевых ошибок подряд — "

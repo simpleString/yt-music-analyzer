@@ -1,4 +1,5 @@
 import json
+import threading
 
 import numpy as np
 from sqlalchemy import text
@@ -146,10 +147,11 @@ def _weighted_matrix(groups: dict, ids: list[str]) -> np.ndarray:
     return np.hstack(blocks)
 
 
-def run_clustering() -> None:
+def run_clustering(stop: threading.Event | None = None) -> None:
     try:
         if not jobs.start_job("clusters"):
             return
+        stop = stop if stop is not None else threading.Event()
         from app.config import settings as cfg
 
         with Session(engine) as session:
@@ -199,6 +201,12 @@ def run_clustering() -> None:
 
             km = KMeans(n_clusters=k, n_init=10, random_state=42)
             labels = km.fit_predict(X)
+            if jobs.should_stop("clusters", stop):
+                session.execute(text("UPDATE track SET cluster_id = NULL"))
+                session.execute(text("DELETE FROM cluster"))
+                session.commit()
+                jobs.stop_job("clusters", "остановлено пользователем")
+                return
 
             session.execute(text("UPDATE track SET cluster_id = NULL"))
             session.execute(text("DELETE FROM cluster"))

@@ -1,6 +1,7 @@
+import threading
 from collections import Counter
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlmodel import Session, select
 
 from app.config import settings
@@ -12,10 +13,11 @@ from app.services import jobs
 BATCH = 500
 
 
-def run_import(filepath: str) -> None:
+def run_import(filepath: str, stop: threading.Event | None = None) -> None:
     try:
         if not jobs.start_job("import"):
             return
+        stop = stop if stop is not None else threading.Event()
         data = load_history_file(filepath)
         entries = parse_watch_history(data, settings.timezone)
 
@@ -60,7 +62,17 @@ def run_import(filepath: str) -> None:
                 if len(new_listens) >= BATCH:
                     session.add_all(new_listens)
                     session.commit()
+                    # освобождаем identity map: без этого все Listen/Track
+                    # копятся в памяти сессии до конца импорта (утечка → OOM)
+                    session.expunge_all()
                     new_listens = []
+                    if jobs.should_stop("import", stop):
+                        break
+            if jobs.should_stop("import", stop):
+                jobs.stop_job(
+                    "import", detail="остановлено пользователем (частичный импорт)"
+                )
+                return
 
             if new_listens:
                 session.add_all(new_listens)
@@ -74,12 +86,8 @@ def run_import(filepath: str) -> None:
             )
             session.commit()
 
-            n_tracks = len(
-                session.exec(select(Track.video_id)).all()  # type: ignore[arg-type]
-            )
-            n_listens = len(
-                session.exec(select(Listen.id)).all()  # type: ignore[arg-type]
-            )
+            n_tracks = session.exec(select(func.count()).select_from(Track)).one()
+            n_listens = session.exec(select(func.count()).select_from(Listen)).one()
             added = Counter(e.video_id for e in unique)
 
         jobs.finish_job(

@@ -1,4 +1,5 @@
 import re
+import threading
 
 from sqlmodel import Session, select
 
@@ -121,10 +122,11 @@ def is_artist_channel_dash(title: str, channel: str) -> bool:
     return left.casefold() == ch.casefold()
 
 
-def run_filter() -> None:
+def run_filter(stop: threading.Event | None = None) -> None:
     try:
         if not jobs.start_job("filter"):
             return
+        stop = stop if stop is not None else threading.Event()
         with Session(engine) as session:
             stmt = select(Track).where(
                 (Track.is_music == None)  # noqa: E711
@@ -202,37 +204,53 @@ def run_filter() -> None:
                 f"каналы: +{n_dash_music} / −{n_dash_not}"
             )
             undecided = still_undecided
-            n_api_music = 0
 
             if undecided and has_api_key():
-                ids = [t.video_id for t in undecided]
-                details = fetch_videos_details(ids)
-                for t in undecided:
-                    info = details.get(t.video_id)
-                    if info is None:
-                        t.is_music = False
-                        t.music_reason = "api-miss"
-                    else:
-                        if info.get("duration") is not None:
-                            t.duration = info["duration"]
-                        if info.get("category_id") is not None:
-                            t.category_id = info["category_id"]
-                        if not t.channel and info.get("channel"):
-                            t.channel = info["channel"]
-                        dur = info.get("duration")
-                        if info.get("category_id") != MUSIC_CATEGORY:
+                api_chunk = 250
+                n_api_music = 0
+                n_api_done = 0
+                for ci in range(0, len(undecided), api_chunk):
+                    if jobs.should_stop("filter", stop):
+                        break
+                    group = undecided[ci : ci + api_chunk]
+                    details = fetch_videos_details(
+                        [t.video_id for t in group]
+                    )
+                    for t in group:
+                        info = details.get(t.video_id)
+                        if info is None:
                             t.is_music = False
-                            t.music_reason = "api:not-music"
-                        elif dur is not None and dur > MAX_TRACK_SECONDS:
-                            t.is_music = False
-                            t.music_reason = "api:too-long"
+                            t.music_reason = "api-miss"
                         else:
-                            t.is_music = True
-                            t.music_reason = "api:cat10"
-                            n_api_music += 1
-                    session.add(t)
-                session.commit()
-                detail += f"; YouTube API: {n_api_music} музыка из {len(undecided)}"
+                            if info.get("duration") is not None:
+                                t.duration = info["duration"]
+                            if info.get("category_id") is not None:
+                                t.category_id = info["category_id"]
+                            if not t.channel and info.get("channel"):
+                                t.channel = info["channel"]
+                            dur = info.get("duration")
+                            if info.get("category_id") != MUSIC_CATEGORY:
+                                t.is_music = False
+                                t.music_reason = "api:not-music"
+                            elif dur is not None and dur > MAX_TRACK_SECONDS:
+                                t.is_music = False
+                                t.music_reason = "api:too-long"
+                            else:
+                                t.is_music = True
+                                t.music_reason = "api:cat10"
+                                n_api_music += 1
+                        session.add(t)
+                    session.commit()
+                    n_api_done += len(group)
+                    jobs.progress(
+                        "filter",
+                        min(total, n_music + n_not + n_api_done),
+                        total,
+                        f"YouTube API: {n_api_music} музыка из {n_api_done}",
+                    )
+                detail += (
+                    f"; YouTube API: {n_api_music} музыка из {n_api_done}"
+                )
             elif undecided:
                 for t in undecided:
                     t.is_music = False
@@ -246,6 +264,9 @@ def run_filter() -> None:
                         select(Track.video_id).where(Track.is_music == True)  # noqa: E712
                     ).all()
                 )
+        if jobs.should_stop("filter", stop):
+            jobs.stop_job("filter", detail=f"остановлено ({detail})")
+            return
         jobs.finish_job(
             "filter", detail=f"итого музыкальных треков: {final_music} ({detail})"
         )

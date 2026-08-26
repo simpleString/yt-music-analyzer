@@ -6,7 +6,12 @@ export type TrackSort = "play_count" | "first_listen" | "last_listen"
 export type SortOrder = "asc" | "desc"
 
 export type JobKind = "import" | "filter" | "audio" | "clusters" | "lyrics"
-export type JobStatus = "pending" | "running" | "done" | "error"
+export type JobStatus =
+  | "pending"
+  | "running"
+  | "done"
+  | "error"
+  | "cancelled"
 
 export interface Job {
   kind: JobKind
@@ -266,6 +271,8 @@ export const api = {
   runAudio: () => postForm("/api/pipeline/audio", new FormData()),
   runClusters: () => postForm("/api/pipeline/clusters", new FormData()),
   runLyrics: () => postForm("/api/pipeline/lyrics", new FormData()),
+  cancelJob: (kind: string) =>
+    postJson(`/api/jobs/${encodeURIComponent(kind)}/cancel`, {}),
   trackLyrics: (videoId: string) =>
     getJson<{ track_id: string; text: string; synced: boolean; language: string; sentiment: number }>(
       `/api/tracks/${encodeURIComponent(videoId)}/lyrics`

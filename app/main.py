@@ -41,7 +41,15 @@ app = FastAPI(title="yt-music-analyzer", lifespan=lifespan)
 
 
 def _spawn(kind: str, target) -> None:
-    t = threading.Thread(target=target, daemon=True, name=f"stage-{kind}")
+    stop = jobs_svc.register_cancel(kind)
+
+    def wrapped() -> None:
+        try:
+            target(stop)
+        finally:
+            jobs_svc.clear_cancel(kind)
+
+    t = threading.Thread(target=wrapped, daemon=True, name=f"stage-{kind}")
     _workers[kind] = t
     t.start()
 
@@ -123,7 +131,7 @@ async def api_import(
             "Не удалось разобрать JSON. Нужен файл «История просмотров "
             "YouTube» из Google Takeout.",
         )
-    _spawn("import", lambda: run_import(target))
+    _spawn("import", lambda stop: run_import(target, stop))
     return {"ok": True}
 
 
@@ -347,6 +355,16 @@ def api_track_lyrics(video_id: str) -> dict:
             "language": row.language,
             "sentiment": row.sentiment,
         }
+
+
+@app.post("/api/jobs/{kind}/cancel")
+def api_cancel_job(kind: str) -> dict:
+    if kind not in jobs_svc.KINDS:
+        raise HTTPException(404, "Неизвестный тип задания")
+    ok = jobs_svc.request_cancel(kind)
+    if not ok:
+        raise HTTPException(409, "Задание не выполняется")
+    return {"ok": True, "kind": kind}
 
 
 @app.get("/api/dashboard")

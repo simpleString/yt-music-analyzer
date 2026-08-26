@@ -1,5 +1,6 @@
 import difflib
 import re
+import threading
 import time
 from datetime import datetime
 
@@ -148,10 +149,11 @@ def _fetch_lyrics(track: Track, client: httpx.Client) -> Lyrics | None:
     )
 
 
-def run_lyrics() -> None:
+def run_lyrics(stop: threading.Event | None = None) -> None:
     try:
         if not jobs.start_job("lyrics"):
             return
+        stop = stop if stop is not None else threading.Event()
         with Session(engine) as session:
             have = set(session.exec(select(Lyrics.track_id)).all())  # type: ignore[arg-type]
             stmt = (
@@ -180,6 +182,8 @@ def run_lyrics() -> None:
             headers={"User-Agent": settings.mb_user_agent},
         ) as client:
             for i, track in enumerate(candidates):
+                if jobs.should_stop("lyrics", stop):
+                    break
                 row = _fetch_lyrics(track, client)
                 if row is not None:
                     with Session(engine) as session:
@@ -194,6 +198,11 @@ def run_lyrics() -> None:
                         f"найдено {found} из {i + 1}; последний: {track.title[:45]}",
                     )
 
+        if jobs.should_stop("lyrics", stop):
+            jobs.stop_job(
+                "lyrics", detail=f"остановлено; найдено {found} текстов"
+            )
+            return
         jobs.finish_job(
             "lyrics",
             detail=f"найдено {found} текстов из {total} проверенных",

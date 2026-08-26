@@ -1,7 +1,11 @@
-import type { Job, JobStatus } from "@/lib/api"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { Square } from "lucide-react"
+
+import { api, type Job, type JobStatus } from "@/lib/api"
 import { useStateQuery } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -24,17 +28,30 @@ const STATUS_LABELS: Record<JobStatus, string> = {
   running: "выполняется",
   done: "готово",
   error: "ошибка",
+  cancelled: "остановлено",
 }
 
-const STATUS_VARIANTS: Record<JobStatus, "default" | "secondary" | "destructive" | "outline"> = {
+const STATUS_VARIANTS: Record<
+  JobStatus,
+  "default" | "secondary" | "destructive" | "outline"
+> = {
   pending: "outline",
   running: "default",
   done: "secondary",
   error: "destructive",
+  cancelled: "secondary",
 }
 
 export function JobsPanel() {
+  const queryClient = useQueryClient()
   const { data } = useStateQuery()
+
+  const cancel = useMutation({
+    mutationFn: (kind: string) => api.cancelJob(kind),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["state"] }),
+  })
+
   if (!data) return null
 
   const { totals, jobs } = data
@@ -88,6 +105,19 @@ export function JobsPanel() {
                 <span className="text-muted-foreground text-xs tabular-nums">
                   {job.done} / {job.total}
                 </span>
+              )}
+              {job.status === "running" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="hover:text-destructive h-6 gap-1 px-2 text-xs"
+                  disabled={cancel.isPending}
+                  title="Остановить задание"
+                  onClick={() => cancel.mutate(job.kind)}
+                >
+                  <Square className="size-3" />
+                  Стоп
+                </Button>
               )}
             </div>
             {job.total > 0 && (

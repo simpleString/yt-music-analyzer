@@ -233,6 +233,17 @@ export interface RecommendationsData {
   mood_name: string
 }
 
+export interface EssentiaRecommendationsData {
+  similar: EssentiaSimilarTrack[]
+  total: number
+}
+
+export interface EssentiaSimilarTrack {
+  track: TrackInfo
+  distance: number
+  match: string
+}
+
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url)
   if (!res.ok) {
@@ -316,6 +327,10 @@ export const api = {
   recommendations: (trackId: string) =>
     getJson<RecommendationsData>(
       `/api/recommendations${trackId ? `?track_id=${encodeURIComponent(trackId)}` : ""}`
+    ),
+  recommendationsEssentia: (trackId: string, offset = 0, limit = 6) =>
+    getJson<EssentiaRecommendationsData>(
+      `/api/recommendations/essentia?track_id=${encodeURIComponent(trackId)}&offset=${offset}&limit=${limit}`
     ),
   importFile: (file: File) => {
     const form = new FormData()

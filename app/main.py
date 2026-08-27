@@ -24,6 +24,7 @@ from app.services.recommend import (
     similar_artists,
     similar_tracks,
     similar_tracks_v2,
+    similar_tracks_essentia,
 )
 from app.services import stats as stats_svc
 
@@ -621,6 +622,37 @@ def api_recommendations(track_id: str = "") -> dict:
             "mb_error": mb_error,
             "mood_name": mood_name,
         }
+
+
+@app.get("/api/recommendations/essentia")
+def api_recommendations_essentia(
+    track_id: str = "", offset: int = 0, limit: int = 6
+) -> dict:
+    with Session(engine) as session:
+        if not track_id:
+            return {"similar": [], "total": 0}
+        sim = similar_tracks_essentia(track_id, offset=offset, limit=limit)
+        if sim is None:
+            return {"similar": [], "total": 0}
+        items, total = sim
+        result = []
+        for s in items:
+            t = session.get(Track, s["track"].video_id)
+            if t is None:
+                continue
+            result.append(
+                {
+                    "track": {
+                        "video_id": t.video_id,
+                        "title": t.title,
+                        "channel": t.channel,
+                        "is_music": t.is_music,
+                    },
+                    "distance": s["distance"],
+                    "match": s["match"],
+                }
+            )
+        return {"similar": result, "total": total}
 
 
 if DIST_DIR.is_dir():

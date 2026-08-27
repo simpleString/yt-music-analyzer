@@ -253,6 +253,114 @@ def _tfidf_dist(tfidf: dict[str, object], a: str, b: str) -> float | None:
     return float(1.0 - va.multiply(vb).sum())
 
 
+def _essentia_tags_vec(tags_json: str) -> dict[str, any]:
+    """Parse Essentia tags JSON and return a dict with genre, instrument, mood, vocal vectors."""
+    if not tags_json:
+        return {"genres": {}, "instruments": {}, "moods": {}, "vocal": 0.0}
+    try:
+        data = json.loads(tags_json)
+    except ValueError:
+        return {"genres": {}, "instruments": {}, "moods": {}, "vocal": 0.0}
+    genres = {g["name"]: float(g.get("score", 0.0)) for g in data.get("genres", [])}
+    instruments = {
+        g["name"]: float(g.get("score", 0.0)) for g in data.get("instruments", [])
+    }
+    moods = data.get("moods", {})
+    # ensure all 8 moods present as float
+    MOOD_ORDER = [
+        "mood_happy", "mood_sad", "mood_relaxed", "mood_aggressive",
+        "mood_epic", "mood_dark", "mood_romantic", "mood_atmospheric"
+    ]
+    mood_vec = {k: float(moods.get(k, 0.0)) for k in MOOD_ORDER}
+    vocal = float(data.get("vocal_ratio", 0.0))
+    return {"genres": genres, "instruments": instruments, "moods": mood_vec, "vocal": vocal}
+
+
+def _essentia_cosine(a: dict[str, float], b: dict[str, float]) -> float | None:
+    if not a or not b:
+        return None
+    dot = sum(v * b.get(k, 0.0) for k, v in a.items())
+    na = math.sqrt(sum(v * v for v in a.values()))
+    nb = math.sqrt(sum(v * v for v in b.values()))
+    if na == 0.0 or nb == 0.0:
+        return None
+    return 1.0 - dot / (na * nb)
+
+
+def _essentia_similarity(t1: dict[str, any], t2: dict[str, any]) -> float:
+    """Return a combined similarity score 0..1 (higher = more similar)."""
+    # genre cosine (higher = more similar); we invert distance to similarity
+    g_dist = _essentia_cosine(t1["genres"], t2["genres"])
+    g_sim = 1.0 - g_dist if g_dist is not None else 0.0
+
+    # instrument cosine
+    i_dist = _essentia_cosine(t1["instruments"], t2["instruments"])
+    i_sim = 1.0 - i_dist if i_dist is not None else 0.0
+
+    # mood cosine (8-dim)
+    m_dist = _essentia_cosine(t1["moods"], t2["moods"])
+    m_sim = 1.0 - m_dist if m_dist is not None else 0.0
+
+    # vocal ratio proximity: 1 - |v1-v2|
+    v_diff = abs(t1["vocal"] - t2["vocal"])
+    v_sim = 1.0 - v_diff
+
+    # weights (sum to 1)
+    w_g, w_i, w_m, w_v = 0.30, 0.15, 0.30, 0.25
+    total = w_g * g_sim + w_i * i_sim + w_m * m_sim + w_v * v_sim
+    # normalise by sum of weights (they already sum to 1)
+    return round(total, 3)
+
+
+def similar_tracks_essentia(
+    track_id: str, offset: int = 0, limit: int = 6
+) -> tuple[list[dict], int] | None:
+    """Find similar tracks using Essentia tags (genres, instruments, moods, vocal_ratio).
+
+    Returns (results, total) where results is the paginated slice.
+    None — not enough data.
+    """
+    with Session(engine) as session:
+        features = session.exec(
+            select(AudioFeatures).where(AudioFeatures.source == "audio")
+        ).all()
+        tags_map: dict[str, str] = {}
+        for f in features:
+            tags_map[f.track_id] = f.tags or ""
+
+        if track_id not in tags_map:
+            return None
+
+        t1 = _essentia_tags_vec(tags_map[track_id])
+        if not any(t1["genres"]) and not any(t1["instruments"]):
+            return None
+
+        scored: list[tuple[float, AudioFeatures]] = []
+        for f in features:
+            if f.track_id == track_id:
+                continue
+            t2 = _essentia_tags_vec(f.tags or "")
+            sim = _essentia_similarity(t1, t2)
+            scored.append((sim, f))
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        total = len(scored)
+        result = []
+        for sim, f in scored[offset : offset + limit]:
+            t = session.get(Track, f.track_id)
+            if t is None:
+                continue
+            dist = round(1.0 - sim, 3)
+            result.append(
+                {
+                    "track": t,
+                    "distance": dist,
+                    "match": "essentia",
+                }
+            )
+        return result, total
+
+
 def similar_tracks_v2(track_id: str, k: int = 6) -> list[dict] | None:
     """Взвешенная похожесть по группам фич + теги/тексты/темы.
 

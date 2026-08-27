@@ -1,5 +1,5 @@
-import { useState } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useEffect, useRef, useState } from "react"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { Link, useNavigate, useParams } from "react-router-dom"
 import {
   Cell,
@@ -65,6 +65,7 @@ const MATCH_COLORS: Record<string, string> = {
   "по жанру": "var(--chart-1)",
   "по тексту": "var(--chart-3)",
   "по темам": "var(--chart-2)",
+  essentia: "var(--chart-4)",
 }
 
 function fmtDuration(sec: number | null): string {
@@ -78,6 +79,7 @@ export function TrackCard() {
   const { videoId } = useParams()
   const navigate = useNavigate()
   const [showLyrics, setShowLyrics] = useState(false)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
 
   const { data: t, isLoading, isError } = useQuery({
     queryKey: ["track", videoId],
@@ -96,6 +98,40 @@ export function TrackCard() {
     queryFn: () => api.recommendations(videoId!),
     enabled: !!videoId,
   })
+
+  const essentiaQuery = useInfiniteQuery({
+    queryKey: ["essentia-recommendations", videoId],
+    queryFn: ({ pageParam = 0 }) =>
+      api.recommendationsEssentia(videoId!, pageParam, 6),
+    initialPageParam: 0,
+    enabled: !!videoId,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((sum, p) => sum + p.similar.length, 0)
+      return loaded < lastPage.total ? loaded : undefined
+    },
+  })
+
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (
+          entry.isIntersecting &&
+          essentiaQuery.hasNextPage &&
+          !essentiaQuery.isFetchingNextPage
+        ) {
+          essentiaQuery.fetchNextPage()
+        }
+      },
+      { rootMargin: "200px" }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [essentiaQuery.hasNextPage, essentiaQuery.isFetchingNextPage, essentiaQuery.fetchNextPage])
+
+  const essentiaItems = essentiaQuery.data?.pages.flatMap((p) => p.similar) ?? []
+  const essentiaTotal = essentiaQuery.data?.pages[0]?.total ?? 0
 
   if (isLoading) return <p className="text-muted-foreground">Загрузка…</p>
   if (isError || !t)
@@ -499,6 +535,101 @@ export function TrackCard() {
           )}
         </CardContent>
       </Card>
+
+      {/* Похожие треки (Essentia) — infinite feed */}
+      {essentiaItems.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Похожие треки (Essentia)</CardTitle>
+            <CardDescription>
+              жанры · инструменты · настроения · вокал ·{" "}
+              {essentiaTotal} всего
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="flex flex-col">
+              {essentiaItems.map((s, i) => {
+                const maxD = Math.max(...essentiaItems.map((x) => x.distance))
+                const sim = maxD > 0 ? 0.5 + 0.5 * (1 - s.distance / maxD) : 1
+                const pct = Math.round(sim * 100)
+                const hue = 45 + (142 - 45) * ((sim - 0.5) * 2)
+                return (
+                  <li
+                    key={`${s.track.video_id}-${i}`}
+                    className="hover:bg-muted/50 flex cursor-pointer items-center gap-3 rounded-md border-b p-2 last:border-b-0"
+                    title={`расстояние: ${s.distance}`}
+                    onClick={() => navigate(`/track/${s.track.video_id}`)}
+                  >
+                    <span className="text-muted-foreground w-6 shrink-0 text-right text-sm tabular-nums">
+                      {i + 1}
+                    </span>
+                    <img
+                      src={`https://i.ytimg.com/vi/${s.track.video_id}/mqdefault.jpg`}
+                      alt=""
+                      loading="lazy"
+                      className="bg-muted h-10 w-[71px] shrink-0 rounded object-cover"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm">
+                        {s.track.title}
+                      </span>
+                      <span className="text-muted-foreground block truncate text-xs">
+                        {s.track.channel}
+                      </span>
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className="shrink-0 text-xs"
+                      style={{
+                        borderColor:
+                          MATCH_COLORS[s.match] ?? "var(--chart-5)",
+                        color: MATCH_COLORS[s.match] ?? "var(--chart-5)",
+                      }}
+                    >
+                      {s.match}
+                    </Badge>
+                    <span className="flex w-32 shrink-0 items-center gap-2">
+                      <span className="bg-muted h-1.5 flex-1 overflow-hidden rounded-full">
+                        <span
+                          className="block h-full rounded-full"
+                          style={{
+                            width: `${pct}%`,
+                            background: `hsl(${hue} 70% 45%)`,
+                          }}
+                        />
+                      </span>
+                      <span className="w-9 text-right text-xs tabular-nums">
+                        {pct}%
+                      </span>
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+            {/* sentinel for infinite scroll */}
+            <div ref={sentinelRef} className="h-4" />
+            {essentiaQuery.isFetchingNextPage && (
+              <p className="text-muted-foreground py-2 text-center text-sm">
+                Загрузка ещё…
+              </p>
+            )}
+            {!essentiaQuery.hasNextPage && essentiaItems.length > 0 && (
+              <p className="text-muted-foreground py-2 text-center text-xs">
+                показано все {essentiaTotal} треков
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {essentiaQuery.isPending && videoId && (
+        <Card>
+          <CardContent className="py-6">
+            <p className="text-muted-foreground text-center text-sm">
+              Подбор похожих треков…
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Похожие исполнители */}
       {recs?.similar_artists && recs.similar_artists.length > 0 && (

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:api": "uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

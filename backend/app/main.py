@@ -28,7 +28,7 @@ from app.services.recommend import (
 )
 from app.services import stats as stats_svc
 
-DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
+DIST_DIR = settings.frontend_dist
 
 _workers: dict[str, threading.Thread] = {}
 

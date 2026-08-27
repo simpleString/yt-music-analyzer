@@ -2,6 +2,8 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -12,6 +14,7 @@ class Settings(BaseSettings):
     youtube_daily_quota: int = 10000
     timezone: str = "Europe/Moscow"
     data_dir: Path = Path("data")
+    frontend_dist: Path = _REPO_ROOT / "frontend" / "dist"
     audio_analysis_limit: int = 5
     analyze_full_max: int = 300
     audio_workers: int = 2

@@ -2,7 +2,7 @@
 name = "yt-music-analyzer"
 version = "0.1.0"
 description = "Локальное web-приложение для анализа музыкальных вкусов на основе истории YouTube"
-readme = "PLAN.md"
+readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.115",

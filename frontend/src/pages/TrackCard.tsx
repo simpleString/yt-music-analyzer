@@ -80,6 +80,7 @@ export function TrackCard() {
   const navigate = useNavigate()
   const [showLyrics, setShowLyrics] = useState(false)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const similarSentinelRef = useRef<HTMLDivElement | null>(null)
 
   const { data: t, isLoading, isError } = useQuery({
     queryKey: ["track", videoId],
@@ -111,6 +112,18 @@ export function TrackCard() {
     },
   })
 
+  const similarQuery = useInfiniteQuery({
+    queryKey: ["similar-recommendations", videoId],
+    queryFn: ({ pageParam = 0 }) =>
+      api.recommendationsSimilar(videoId!, pageParam, 6),
+    initialPageParam: 0,
+    enabled: !!videoId,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((sum, p) => sum + p.similar.length, 0)
+      return loaded < lastPage.total ? loaded : undefined
+    },
+  })
+
   useEffect(() => {
     const el = sentinelRef.current
     if (!el) return
@@ -130,8 +143,29 @@ export function TrackCard() {
     return () => obs.disconnect()
   }, [essentiaQuery.hasNextPage, essentiaQuery.isFetchingNextPage, essentiaQuery.fetchNextPage])
 
+  useEffect(() => {
+    const el = similarSentinelRef.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (
+          entry.isIntersecting &&
+          similarQuery.hasNextPage &&
+          !similarQuery.isFetchingNextPage
+        ) {
+          similarQuery.fetchNextPage()
+        }
+      },
+      { rootMargin: "200px" }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [similarQuery.hasNextPage, similarQuery.isFetchingNextPage, similarQuery.fetchNextPage])
+
   const essentiaItems = essentiaQuery.data?.pages.flatMap((p) => p.similar) ?? []
   const essentiaTotal = essentiaQuery.data?.pages[0]?.total ?? 0
+  const similarItems = similarQuery.data?.pages.flatMap((p) => p.similar) ?? []
+  const similarTotal = similarQuery.data?.pages[0]?.total ?? 0
 
   if (isLoading) return <p className="text-muted-foreground">Загрузка…</p>
   if (isError || !t)
@@ -165,7 +199,7 @@ export function TrackCard() {
   const hasFeatures = t.energy != null || t.tempo != null
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
         <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
           ← Назад
@@ -174,7 +208,7 @@ export function TrackCard() {
 
       {/* Шапка */}
       <Card>
-        <CardContent className="flex flex-wrap items-start gap-6 pt-6">
+        <CardContent className="flex flex-wrap items-start gap-3">
           <a
             href={`https://www.youtube.com/watch?v=${t.video_id}`}
             target="_blank"
@@ -184,12 +218,12 @@ export function TrackCard() {
             <img
               src={`https://i.ytimg.com/vi/${t.video_id}/mqdefault.jpg`}
               alt=""
-              className="h-28 rounded-md border"
+              className="h-24 border border-[#999999]"
               loading="lazy"
             />
           </a>
           <div className="flex min-w-0 flex-1 flex-col gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight break-words">
+            <h1 className="text-lg font-bold text-black break-words">
               {t.title}
             </h1>
             <p className="text-muted-foreground">{t.channel}</p>
@@ -206,7 +240,7 @@ export function TrackCard() {
                 </Badge>
               )}
             </div>
-            <dl className="text-muted-foreground mt-2 grid grid-cols-2 gap-x-8 gap-y-1 text-sm sm:grid-cols-3">
+            <dl className="text-muted-foreground mt-1 grid grid-cols-2 gap-x-6 gap-y-0.5 text-sm sm:grid-cols-3">
               <div>
                 <dt className="inline">прослушиваний: </dt>
                 <dd className="text-foreground inline font-medium">
@@ -250,7 +284,7 @@ export function TrackCard() {
 
       {/* Диаграммы */}
       {hasFeatures ? (
-        <div className="grid gap-6 md:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle>Настроения</CardTitle>
@@ -335,7 +369,7 @@ export function TrackCard() {
                       className="flex items-center gap-1.5 text-xs"
                     >
                       <span
-                        className="inline-block h-2.5 w-2.5 rounded-full"
+                        className="inline-block h-2.5 w-2.5 border border-[#666666]"
                         style={{
                           background: PIE_COLORS[i % PIE_COLORS.length],
                         }}
@@ -384,7 +418,7 @@ export function TrackCard() {
                       className="flex items-center gap-1.5 text-xs"
                     >
                       <span
-                        className="inline-block h-2.5 w-2.5 rounded-full"
+                        className="inline-block h-2.5 w-2.5 border border-[#666666]"
                         style={{
                           background: PIE_COLORS[i % PIE_COLORS.length],
                         }}
@@ -439,11 +473,15 @@ export function TrackCard() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {recs?.similar?.length ? (
+          {similarQuery.isPending ? (
+            <p className="text-muted-foreground text-sm">
+              Подбор похожих треков…
+            </p>
+          ) : similarItems.length > 0 ? (
             <>
               <div className="mb-3 flex flex-wrap gap-1.5">
                 {Array.from(
-                  new Set(recs.similar.map((s) => s.match).filter(Boolean))
+                  new Set(similarItems.map((s) => s.match).filter(Boolean))
                 ).map((m) => (
                   <Badge
                     key={m}
@@ -459,9 +497,9 @@ export function TrackCard() {
                 ))}
               </div>
               <ul className="flex flex-col">
-                {recs.similar.map((s, i) => {
+                {similarItems.map((s, i) => {
                   const maxD = Math.max(
-                    ...recs.similar.map((x) => x.distance)
+                    ...similarItems.map((x) => x.distance)
                   )
                   // смещённая шкала: всё в рекомендациях уже «похоже»,
                   // поэтому худший из топа ≥ 50%, лучший → 100%
@@ -472,7 +510,7 @@ export function TrackCard() {
                   return (
                     <li
                       key={s.track.video_id}
-                      className="hover:bg-muted/50 flex cursor-pointer items-center gap-3 rounded-md border-b p-2 last:border-b-0"
+                      className="hover:bg-[#ffffcc] flex cursor-pointer items-center gap-1.5 border-b border-[#e0e0e0] px-1 py-0.5 last:border-b-0"
                       title={`расстояние: ${s.distance}`}
                       onClick={() => navigate(`/track/${s.track.video_id}`)}
                     >
@@ -483,7 +521,7 @@ export function TrackCard() {
                         src={`https://i.ytimg.com/vi/${s.track.video_id}/mqdefault.jpg`}
                         alt=""
                         loading="lazy"
-                        className="bg-muted h-10 w-[71px] shrink-0 rounded object-cover"
+                        className="h-9 w-[56px] shrink-0 border border-[#999999] object-cover"
                       />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm">
@@ -510,9 +548,9 @@ export function TrackCard() {
                         </Badge>
                       ) : null}
                       <span className="flex w-32 shrink-0 items-center gap-2">
-                        <span className="bg-muted h-1.5 flex-1 overflow-hidden rounded-full">
+                        <span className="h-3 flex-1 overflow-hidden border border-[#999999] bg-[#eeeeee]">
                           <span
-                            className="block h-full rounded-full"
+                            className="block h-full"
                             style={{
                               width: `${pct}%`,
                               background: `hsl(${hue} 70% 45%)`,
@@ -527,6 +565,18 @@ export function TrackCard() {
                   )
                 })}
               </ul>
+              {/* sentinel for infinite scroll */}
+              <div ref={similarSentinelRef} className="h-4" />
+              {similarQuery.isFetchingNextPage && (
+                <p className="text-muted-foreground py-2 text-center text-sm">
+                  Загрузка ещё…
+                </p>
+              )}
+              {!similarQuery.hasNextPage && similarItems.length > 0 && (
+                <p className="text-muted-foreground py-2 text-center text-xs">
+                  показано все {similarTotal} треков
+                </p>
+              )}
             </>
           ) : (
             <p className="text-muted-foreground text-sm">
@@ -556,7 +606,7 @@ export function TrackCard() {
                 return (
                   <li
                     key={`${s.track.video_id}-${i}`}
-                    className="hover:bg-muted/50 flex cursor-pointer items-center gap-3 rounded-md border-b p-2 last:border-b-0"
+                    className="hover:bg-[#ffffcc] flex cursor-pointer items-center gap-1.5 border-b border-[#e0e0e0] px-1 py-0.5 last:border-b-0"
                     title={`расстояние: ${s.distance}`}
                     onClick={() => navigate(`/track/${s.track.video_id}`)}
                   >
@@ -567,7 +617,7 @@ export function TrackCard() {
                       src={`https://i.ytimg.com/vi/${s.track.video_id}/mqdefault.jpg`}
                       alt=""
                       loading="lazy"
-                      className="bg-muted h-10 w-[71px] shrink-0 rounded object-cover"
+                      className="h-9 w-[56px] shrink-0 border border-[#999999] object-cover"
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm">
@@ -589,9 +639,9 @@ export function TrackCard() {
                       {s.match}
                     </Badge>
                     <span className="flex w-32 shrink-0 items-center gap-2">
-                      <span className="bg-muted h-1.5 flex-1 overflow-hidden rounded-full">
+                      <span className="h-3 flex-1 overflow-hidden border border-[#999999] bg-[#eeeeee]">
                         <span
-                          className="block h-full rounded-full"
+                          className="block h-full"
                           style={{
                             width: `${pct}%`,
                             background: `hsl(${hue} 70% 45%)`,
@@ -642,7 +692,7 @@ export function TrackCard() {
               {recs.similar_artists.map((a) => (
                 <li
                   key={a.channel}
-                  className="flex items-center justify-between gap-2 rounded-lg border p-3"
+                  className="flex items-center justify-between gap-2 border border-[#cccccc] px-2 py-1.5"
                 >
                   <span className="min-w-0">
                     <b className="block truncate text-sm">{a.channel}</b>

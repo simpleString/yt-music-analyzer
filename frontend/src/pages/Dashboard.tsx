@@ -119,8 +119,8 @@ export function Dashboard() {
 
   if (!data.totals.music_listens) {
     return (
-      <div className="flex flex-col gap-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Дашборд</h1>
+      <div className="flex flex-col gap-3">
+        <h1 className="text-lg font-bold text-black">Дашборд</h1>
         <Alert>
           <AlertDescription>
             Нет данных{periodLabel && ` за период (${periodLabel})`}. Сначала
@@ -136,12 +136,12 @@ export function Dashboard() {
   const weekdays = data.by_weekday.map(([d, v]) => ({ day: d, listens: v }))
 
   return (
-    <div
-      className={`flex flex-col gap-6 transition-opacity ${
+      <div
+      className={`flex flex-col gap-3 transition-opacity ${
         isFetching ? "pointer-events-none opacity-60" : ""
       }`}
     >
-      <h1 className="text-2xl font-semibold tracking-tight">Дашборд</h1>
+      <h1 className="text-lg font-bold text-black">Дашборд</h1>
 
       <div className="flex flex-wrap items-center gap-2">
         <Select
@@ -185,7 +185,7 @@ export function Dashboard() {
         )}
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Топ исполнителей</CardTitle>
@@ -294,19 +294,19 @@ export function Dashboard() {
               <ChartTooltip content={<ChartTooltipContent />} />
               <Line
                 dataKey="listens"
-                type="monotone"
+                type="linear"
                 stroke="var(--chart-1)"
                 fill="var(--chart-1)"
                 fillOpacity={0.15}
                 dot={false}
-                strokeWidth={2}
+                strokeWidth={1}
               />
             </LineChart>
           </ChartContainer>
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>По часам суток</CardTitle>
@@ -327,7 +327,7 @@ export function Dashboard() {
                 />
                 <YAxis width={36} />
                 <ChartTooltip content={<ChartTooltipContent />} />
-                <Bar dataKey="listens" fill="var(--chart-2)" radius={4} />
+                <Bar dataKey="listens" fill="var(--chart-2)" />
               </BarChart>
             </ChartContainer>
           </CardContent>
@@ -347,7 +347,7 @@ export function Dashboard() {
                 <XAxis dataKey="day" tickLine={false} axisLine={false} />
                 <YAxis width={36} />
                 <ChartTooltip content={<ChartTooltipContent />} />
-                <Bar dataKey="listens" fill="var(--chart-4)" radius={4} />
+                <Bar dataKey="listens" fill="var(--chart-4)" />
               </BarChart>
             </ChartContainer>
           </CardContent>

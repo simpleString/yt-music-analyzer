@@ -361,9 +361,12 @@ def similar_tracks_essentia(
         return result, total
 
 
-def similar_tracks_v2(track_id: str, k: int = 6) -> list[dict] | None:
+def similar_tracks_v2(
+    track_id: str, offset: int = 0, limit: int = 6
+) -> tuple[list[dict], int] | None:
     """Взвешенная похожесть по группам фич + теги/тексты/темы.
 
+    Возвращает (страница результатов, всего), как similar_tracks_essentia.
     None — недостаточно v2-треков. Группы участвуют в скоре пары только
     если данные есть у обоих треков; общий скор нормируется на сумму
     весов доступных групп (треки без текстов не штрафуются).
@@ -425,7 +428,7 @@ def similar_tracks_v2(track_id: str, k: int = 6) -> list[dict] | None:
         scored.sort(key=lambda x: x[0])
 
         result = []
-        for total, other, label in scored[:k]:
+        for total, other, label in scored[offset : offset + limit]:
             t = session.get(Track, other.track_id)
             if t is None:
                 continue
@@ -437,7 +440,7 @@ def similar_tracks_v2(track_id: str, k: int = 6) -> list[dict] | None:
                     "match": label,
                 }
             )
-        return result
+        return result, len(scored)
 
 
 def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
@@ -501,14 +504,21 @@ def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
         return result
 
 
-def similar_tracks(track_id: str, k: int = 4) -> list[dict]:
+def similar_tracks(
+    track_id: str, offset: int = 0, limit: int = 6
+) -> tuple[list[dict], int] | None:
+    """Простая похожесть по числовым фичам (запасной вариант без v2).
+
+    Возвращает (страница результатов, всего), как similar_tracks_essentia.
+    None — недостаточно данных.
+    """
     with Session(engine) as session:
         features = session.exec(select(AudioFeatures)).all()
         if len(features) < 2:
-            return []
+            return None
         selected = session.get(AudioFeatures, track_id)
         if selected is None:
-            return []
+            return None
         if selected.source == "audio":
             pool = [f for f in features if f.source == "audio"]
             cols = ["tempo", "energy", "danceability", "acousticness"]
@@ -521,8 +531,9 @@ def similar_tracks(track_id: str, k: int = 4) -> list[dict]:
         X_scaled = StandardScaler().fit_transform(X)
         idx_map = {f.track_id: i for i, f in enumerate(pool)}
         if track_id not in idx_map:
-            return []
-        nn = NearestNeighbors(n_neighbors=min(k + 1, len(pool)), metric="euclidean")
+            return None
+        k = min(offset + limit + 1, len(pool))
+        nn = NearestNeighbors(n_neighbors=k, metric="euclidean")
         nn.fit(X_scaled)
         dist, ind = nn.kneighbors([X_scaled[idx_map[track_id]]])
         result = []
@@ -538,11 +549,10 @@ def similar_tracks(track_id: str, k: int = 4) -> list[dict]:
                     "track": t,
                     "distance": round(float(d), 3),
                     "tempo": pool[int(i)].tempo,
+                    "match": "",
                 }
             )
-            if len(result) >= k:
-                break
-        return result
+        return result[offset : offset + limit], len(pool) - 1
 
 
 def _throttle() -> None:

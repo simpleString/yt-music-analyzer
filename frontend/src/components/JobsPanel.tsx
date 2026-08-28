@@ -64,7 +64,7 @@ export function JobsPanel() {
           Обновляется автоматически (1 раз в секунду во время выполнения)
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+      <CardContent className="flex flex-col gap-2.5">
         {totals.tracks_total > 0 && (
           <p className="text-muted-foreground text-sm">
             Прослушиваний музыки:{" "}
@@ -90,8 +90,8 @@ export function JobsPanel() {
           <div
             key={job.kind}
             className={cn(
-              "rounded-lg border p-3",
-              job.status === "error" && "border-destructive/50"
+              "border border-[#cccccc] p-1.5",
+              job.status === "error" && "border-[#cc0000]"
             )}
           >
             <div className="flex flex-wrap items-center gap-2">
@@ -110,7 +110,7 @@ export function JobsPanel() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="hover:text-destructive h-6 gap-1 px-2 text-xs"
+                  className="hover:text-[#cc0000] h-6 gap-1 px-2 text-xs"
                   disabled={cancel.isPending}
                   title="Остановить задание"
                   onClick={() => cancel.mutate(job.kind)}
@@ -122,15 +122,15 @@ export function JobsPanel() {
             </div>
             {job.total > 0 && (
               <Progress
-                className="mt-2"
+                className="mt-1.5"
                 value={(job.done / job.total) * 100}
               />
             )}
             {job.detail && (
-              <p className="text-muted-foreground mt-2 text-xs">{job.detail}</p>
+              <p className="text-muted-foreground mt-1.5 text-xs">{job.detail}</p>
             )}
             {job.error && (
-              <p className="text-destructive mt-2 text-xs">{job.error}</p>
+              <p className="mt-1.5 text-xs text-[#cc0000]">{job.error}</p>
             )}
           </div>
         ))}

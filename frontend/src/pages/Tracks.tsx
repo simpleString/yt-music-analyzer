@@ -9,14 +9,10 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { Link, useNavigate } from "react-router-dom"
 import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
   Ban,
   Check,
   EyeOff,
   Music,
-  Search,
 } from "lucide-react"
 
 import { api, type TrackListItem, type TrackSort } from "@/lib/api"
@@ -34,7 +30,7 @@ import {
 } from "@/components/ui/select"
 
 const GRID =
-  "grid grid-cols-[2.5rem_4.5rem_minmax(0,1fr)_10.5rem_4rem_4.5rem_4.5rem_4.5rem_4.5rem_6rem_6rem_4.5rem_5.5rem] items-center gap-3 px-3"
+  "grid grid-cols-[2.25rem_4.25rem_minmax(0,1fr)_10.5rem_4rem_4.5rem_4.5rem_4.5rem_4.5rem_6rem_6rem_4.5rem_5.5rem] items-center gap-1.5 px-1.5"
 
 const REASON_LABELS: [string, string][] = [
   ["yt-music-app", "слушал в YouTube Music"],
@@ -241,20 +237,17 @@ export function Tracks() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Вся музыка</h1>
+    <div className="flex flex-col gap-2.5">
+      <h1 className="text-lg font-bold text-black">Вся музыка</h1>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full max-w-md">
-          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-          <Input
-            type="search"
-            placeholder="Поиск по названию или каналу…"
-            className="pl-9"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-          />
-        </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Input
+          type="search"
+          placeholder="Поиск по названию или каналу…"
+          className="w-full max-w-md"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+        />
         <Select
           value={clusterId != null ? String(clusterId) : "all"}
           onValueChange={(v) => setClusterId(v === "all" ? null : Number(v))}
@@ -368,12 +361,12 @@ export function Tracks() {
 
           <div
             ref={parentRef}
-            className="h-[calc(100svh-16rem)] min-h-80 overflow-y-auto rounded-lg border"
+            className="h-[calc(100svh-13rem)] min-h-80 overflow-y-auto border border-[#999999]"
           >
             <div
               className={cn(
                 GRID,
-                "bg-background sticky top-0 z-10 border-b py-2 text-muted-foreground text-xs font-medium whitespace-nowrap"
+                "sticky top-0 z-10 border-b border-[#999999] bg-[#eeeeee] py-1 text-xs font-bold text-black whitespace-nowrap"
               )}
             >
               <span>#</span>
@@ -390,20 +383,18 @@ export function Tracks() {
                   type="button"
                   onClick={() => toggleSort(col.key)}
                   className={cn(
-                    "hover:text-foreground flex items-center gap-1 transition-colors",
+                    "text-[#0000cc] underline flex items-center gap-1",
                     col.align === "right" && "justify-end"
                   )}
                 >
                   {col.label}
                   {sort === col.key ? (
                     order === "desc" ? (
-                      <ArrowDown className="size-3" />
+                      <span className="text-black">▼</span>
                     ) : (
-                      <ArrowUp className="size-3" />
+                      <span className="text-black">▲</span>
                     )
-                  ) : (
-                    <ArrowUpDown className="size-3 opacity-40" />
-                  )}
+                  ) : null}
                 </button>
               ))}
               <span className="text-right">длит.</span>
@@ -432,8 +423,7 @@ export function Tracks() {
                     }}
                     className={cn(
                       GRID,
-                      "hover:bg-muted/50 cursor-pointer border-b border-transparent",
-                      vi.index % 2 === 1 && "bg-muted/20"
+                      "hover:bg-[#ffffcc] cursor-pointer border-b border-[#e0e0e0]"
                     )}
                     title={techTooltip(t)}
                     onClick={(e) => {
@@ -458,7 +448,7 @@ export function Tracks() {
                         src={`https://i.ytimg.com/vi/${t.video_id}/mqdefault.jpg`}
                         alt=""
                         loading="lazy"
-                        className="bg-muted h-10 w-[71px] rounded object-cover"
+                        className="h-10 w-[71px] border border-[#999999] object-cover"
                       />
                     </a>
                     <span className="min-w-0">
@@ -543,7 +533,7 @@ export function Tracks() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="hover:text-destructive size-7"
+                            className="hover:text-[#cc0000] size-7"
                             title="Это не музыка"
                             disabled={classify.isPending}
                             onClick={() =>
@@ -558,7 +548,7 @@ export function Tracks() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="hover:text-destructive size-7"
+                            className="hover:text-[#cc0000] size-7"
                             title={`Скрыть весь канал «${t.channel}»`}
                             disabled={hideChannel.isPending}
                             onClick={() =>
@@ -577,7 +567,7 @@ export function Tracks() {
 
             <div
               ref={sentinelRef}
-              className="flex h-14 items-center justify-center"
+              className="flex h-10 items-center justify-center"
             >
               {isFetchingNextPage && (
                 <span className="text-muted-foreground text-sm">

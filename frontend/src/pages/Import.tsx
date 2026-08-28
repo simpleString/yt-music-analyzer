@@ -76,8 +76,8 @@ export function ImportPage() {
   const busy = importFile.isPending || importPath.isPending || pipeline.isPending
 
   return (
-    <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-semibold tracking-tight">
+    <div className="flex flex-col gap-3">
+      <h1 className="text-lg font-bold text-black">
         Импорт и обработка
       </h1>
 
@@ -94,7 +94,7 @@ export function ImportPage() {
             Файл «История просмотров YouTube» в формате JSON
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-3">
+        <CardContent className="flex flex-col gap-2">
           <form
             className="flex flex-wrap items-center gap-2"
             onSubmit={(e) => {
@@ -156,7 +156,7 @@ export function ImportPage() {
               " YouTube API-ключ не задан — фильтр работает на эвристиках (header «YouTube Музыка», VEVO/-Topic каналы, паттерны названий)."}
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2">
+        <CardContent className="flex flex-wrap items-center gap-1.5">
           <Button
             disabled={busy || busyKinds.has("filter")}
             onClick={() => pipeline.mutate("filter")}

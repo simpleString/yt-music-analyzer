@@ -581,7 +581,6 @@ def api_recommendations(track_id: str = "") -> dict:
             if t is not None:
                 options.append({"track": _track_payload(t)})
         selected = None
-        similar: list[dict] = []
         mb_artists: list[dict] = []
         mb_error = ""
         mood_name = ""
@@ -590,38 +589,41 @@ def api_recommendations(track_id: str = "") -> dict:
             t = session.get(Track, track_id)
             if t is not None:
                 selected = _track_payload(t)
-            v2 = similar_tracks_v2(track_id)
-            if v2 is not None:
-                similar = [
-                    {
-                        "track": _track_payload(s["track"]),
-                        "distance": s["distance"],
-                        "tempo": s["tempo"],
-                        "match": s["match"],
-                    }
-                    for s in v2
-                ]
-            else:
-                similar = [
-                    {
-                        "track": _track_payload(s["track"]),
-                        "distance": s["distance"],
-                        "tempo": s["tempo"],
-                        "match": "",
-                    }
-                    for s in similar_tracks(track_id)
-                ]
             sim_artists = similar_artists(track_id)
             mb_artists, mb_error, mood_name = mb_for_track(track_id)
         return {
             "options": options,
             "selected": selected,
-            "similar": similar,
             "similar_artists": sim_artists,
             "mb_artists": mb_artists,
             "mb_error": mb_error,
             "mood_name": mood_name,
         }
+
+
+@app.get("/api/recommendations/similar")
+def api_recommendations_similar(
+    track_id: str = "", offset: int = 0, limit: int = 6
+) -> dict:
+    if not track_id:
+        return {"similar": [], "total": 0}
+    sim = similar_tracks_v2(track_id, offset=offset, limit=limit)
+    if sim is None:
+        sim = similar_tracks(track_id, offset=offset, limit=limit)
+    if sim is None:
+        return {"similar": [], "total": 0}
+    items, total = sim
+    result = []
+    for s in items:
+        result.append(
+            {
+                "track": _track_payload(s["track"]),
+                "distance": s["distance"],
+                "tempo": s["tempo"],
+                "match": s["match"],
+            }
+        )
+    return {"similar": result, "total": total}
 
 
 @app.get("/api/recommendations/essentia")

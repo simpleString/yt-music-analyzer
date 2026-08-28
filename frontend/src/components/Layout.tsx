@@ -1,7 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom"
 
 import { useStateQuery } from "@/lib/api"
-import { cn } from "@/lib/utils"
 
 const NAV = [
   { to: "/", label: "Главная", end: true },
@@ -15,42 +14,54 @@ export function Layout() {
   const totals = data?.totals
 
   return (
-    <div className="min-h-svh">
-      <header className="bg-background/95 sticky top-0 z-40 w-full border-b backdrop-blur">
-        <div className="flex w-full flex-wrap items-center gap-x-6 gap-y-2 px-6 py-3">
-          <span className="text-sm font-bold tracking-tight">
-            yt-music-analyzer
-          </span>
-          <nav className="flex items-center gap-1">
-            {NAV.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={({ isActive }) =>
-                  cn(
-                    "rounded-md px-3 py-1.5 text-sm transition-colors",
+    <div className="min-h-svh flex flex-col">
+      <div className="w-full px-3 pt-2">
+        <header className="w-full text-center">
+          <div className="flex flex-wrap items-baseline justify-center gap-x-2 gap-y-0.5">
+            <a
+              href="/"
+              className="text-lg font-bold no-underline"
+              style={{ color: "#ff0033" }}
+            >
+              yt-music-analyzer!
+            </a>
+            <span className="text-xs text-[#666666]">
+              — музыкальная библиотека
+            </span>
+          </div>
+          <nav className="mt-0.5 flex flex-wrap items-center justify-center gap-0 text-sm">
+            {NAV.map((item, i) => (
+              <span key={item.to} className="flex items-center">
+                {i > 0 && <span className="px-1.5 text-[#999999]">|</span>}
+                <NavLink
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) =>
                     isActive
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                  )
-                }
-              >
-                {item.label}
-              </NavLink>
+                      ? "font-bold no-underline text-[#000000]"
+                      : "text-[#0000cc] underline"
+                  }
+                >
+                  {item.label}
+                </NavLink>
+              </span>
             ))}
           </nav>
           {totals && (
-            <span className="text-muted-foreground ml-auto text-xs">
+            <div className="mt-0.5 text-xs text-[#666666]">
               треков: {totals.tracks_total} · музыка: {totals.music_tracks} ·
               проанализировано: {totals.analyzed}
-            </span>
+            </div>
           )}
-        </div>
-      </header>
-      <main className="w-full px-6 py-8">
-        <Outlet />
-      </main>
+          <hr className="mt-1.5 border-t border-[#cccccc]" />
+        </header>
+
+        <main className="w-full py-2.5">
+          <Outlet />
+        </main>
+
+       
+      </div>
     </div>
   )
 }

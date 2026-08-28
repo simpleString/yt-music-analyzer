@@ -20,8 +20,8 @@ export function Moods() {
   if (isError || !data) return <p>Не удалось загрузить данные.</p>
 
   return (
-    <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-semibold tracking-tight">
+    <div className="flex flex-col gap-3">
+      <h1 className="text-lg font-bold text-black">
         Плейлисты по настроению
       </h1>
 
@@ -43,7 +43,7 @@ export function Moods() {
         </Alert>
       )}
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-2">
         {data.cards.map((card) => (
           <Card key={card.cluster.id}>
             <CardHeader>
@@ -55,7 +55,7 @@ export function Moods() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ol className="list-decimal space-y-1.5 pl-5">
+              <ol className="list-decimal space-y-0.5 pl-5">
                 {card.tracks.map((t) => (
                   <li key={t.video_id} className="text-sm leading-snug">
                     <a

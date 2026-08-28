@@ -226,7 +226,6 @@ export interface SimilarArtist {
 export interface RecommendationsData {
   options: { track: TrackInfo }[]
   selected: TrackInfo | null
-  similar: SimilarTrack[]
   similar_artists: SimilarArtist[] | null
   mb_artists: MbArtist[]
   mb_error: string
@@ -235,6 +234,11 @@ export interface RecommendationsData {
 
 export interface EssentiaRecommendationsData {
   similar: EssentiaSimilarTrack[]
+  total: number
+}
+
+export interface SimilarRecommendationsData {
+  similar: SimilarTrack[]
   total: number
 }
 
@@ -331,6 +335,10 @@ export const api = {
   recommendationsEssentia: (trackId: string, offset = 0, limit = 6) =>
     getJson<EssentiaRecommendationsData>(
       `/api/recommendations/essentia?track_id=${encodeURIComponent(trackId)}&offset=${offset}&limit=${limit}`
+    ),
+  recommendationsSimilar: (trackId: string, offset = 0, limit = 6) =>
+    getJson<SimilarRecommendationsData>(
+      `/api/recommendations/similar?track_id=${encodeURIComponent(trackId)}&offset=${offset}&limit=${limit}`
     ),
   importFile: (file: File) => {
     const form = new FormData()

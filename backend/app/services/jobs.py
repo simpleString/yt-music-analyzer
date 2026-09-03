@@ -58,16 +58,18 @@ def request_cancel(kind: str) -> bool:
         if job is None or job.status != "running":
             return False
         if _now() - job.updated_at >= STALE_AFTER:
-            # мёртвое задание: гасим сразу, чтобы разблокировать кнопку запуска
+            # задание не обновляло прогресс давно: гасим запись сразу,
+            # чтобы разблокировать кнопку запуска, но флаг отмены оставляем —
+            # если поток жив (просто долго без прогресса), он остановится
             job.status = "cancelled"
             job.detail = "остановлено (задание не отвечало)"
             job.updated_at = _now()
             session.add(job)
-            _clear_cancel_flag(session, kind)
+            set_meta(session, CANCEL_PREFIX + kind, "1")
             session.commit()
-            return True
-        set_meta(session, CANCEL_PREFIX + kind, "1")
-        session.commit()
+        else:
+            set_meta(session, CANCEL_PREFIX + kind, "1")
+            session.commit()
     ev = _cancel_events.get(kind)
     if ev is not None:
         ev.set()
@@ -155,6 +157,25 @@ def stop_job(kind: str, detail: str = "") -> None:
         _clear_cancel_flag(session, kind)
         session.add(job)
         session.commit()
+
+
+def cancel_orphans() -> None:
+    """При старте приложения: потоки прежнего процесса уже мертвы.
+
+    Осиротевшие записи «running» блокируют кнопки до истечения
+    STALE_AFTER — помечаем их отменёнными сразу.
+    """
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Job).where(Job.status == "running")
+        ).all()
+        for job in rows:
+            job.status = "cancelled"
+            job.detail = "прервано перезапуском сервера"
+            job.updated_at = _now()
+            session.add(job)
+        if rows:
+            session.commit()
 
 
 def progress(kind: str, done: int, total: int, detail: str = "") -> None:

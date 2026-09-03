@@ -1,3 +1,4 @@
+import json
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -11,7 +12,14 @@ from sqlmodel import Session, select
 
 from app.config import settings
 from app.db import engine, init_db
-from app.models import AudioFeatures, Cluster, Job, Listen, Lyrics, Track
+from app.models import (
+    AudioFeatures,
+    Cluster,
+    Job,
+    Listen,
+    Lyrics,
+    Track,
+)
 from app.parsers.takeout import load_history_file
 from app.services import jobs as jobs_svc
 from app.services.audio import run_audio_analysis
@@ -36,7 +44,12 @@ _workers: dict[str, threading.Thread] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    jobs_svc.cancel_orphans()
     yield
+    # при остановке сервера (Ctrl+C/reload) просим фоновые задания
+    # завершиться — иначе не-daemon потоки дорабатывают всю очередь
+    for kind in jobs_svc.KINDS:
+        jobs_svc.request_cancel(kind)
 
 
 app = FastAPI(title="yt-music-analyzer", lifespan=lifespan)
@@ -73,6 +86,7 @@ def _job_payload(job: Job) -> dict:
         "done": job.done,
         "detail": job.detail,
         "error": job.error,
+        "updated_at": job.updated_at.isoformat(),
     }
 
 
@@ -188,7 +202,16 @@ def api_tracks(
 
     per_page = max(1, min(per_page, 500))
     page = max(1, page)
-    if sort not in ("play_count", "first_listen", "last_listen"):
+    if sort not in (
+        "play_count",
+        "first_listen",
+        "last_listen",
+        "duration",
+        "tempo",
+        "energy",
+        "danceability",
+        "acousticness",
+    ):
         sort = "play_count"
     if order not in ("asc", "desc"):
         order = "desc"
@@ -221,6 +244,11 @@ def api_tracks(
         "play_count": Track.play_count,
         "first_listen": first_listen,
         "last_listen": last_listen,
+        "duration": Track.duration,
+        "tempo": AudioFeatures.tempo,
+        "energy": AudioFeatures.energy,
+        "danceability": AudioFeatures.danceability,
+        "acousticness": AudioFeatures.acousticness,
     }[sort]
     direction = sort_col.desc() if order == "desc" else sort_col.asc()
 
@@ -273,6 +301,9 @@ def api_tracks(
                         "mood_sad": _f(f.mood_sad, 3),
                         "mood_relaxed": _f(f.mood_relaxed, 3),
                         "mood_aggressive": _f(f.mood_aggressive, 3),
+                        "mood_electronic": _f(f.mood_electronic, 3),
+                        "mood_acoustic": _f(f.mood_acoustic, 3),
+                        "mood_party": _f(f.mood_party, 3),
                         "mood_epic": _f(f.mood_epic, 3),
                         "mood_dark": _f(f.mood_dark, 3),
                         "mood_romantic": _f(f.mood_romantic, 3),
@@ -354,6 +385,9 @@ def api_track_detail(video_id: str) -> dict:
                     "mood_sad": _f(f.mood_sad, 3),
                     "mood_relaxed": _f(f.mood_relaxed, 3),
                     "mood_aggressive": _f(f.mood_aggressive, 3),
+                    "mood_electronic": _f(f.mood_electronic, 3),
+                    "mood_acoustic": _f(f.mood_acoustic, 3),
+                    "mood_party": _f(f.mood_party, 3),
                     "mood_epic": _f(f.mood_epic, 3),
                     "mood_dark": _f(f.mood_dark, 3),
                     "mood_romantic": _f(f.mood_romantic, 3),

@@ -2,10 +2,23 @@ import { useQuery } from "@tanstack/react-query"
 
 export const TRACKS_PER_PAGE = 200
 
-export type TrackSort = "play_count" | "first_listen" | "last_listen"
+export type TrackSort =
+  | "play_count"
+  | "first_listen"
+  | "last_listen"
+  | "duration"
+  | "tempo"
+  | "energy"
+  | "danceability"
+  | "acousticness"
 export type SortOrder = "asc" | "desc"
 
-export type JobKind = "import" | "filter" | "audio" | "clusters" | "lyrics"
+export type JobKind =
+  | "import"
+  | "filter"
+  | "audio"
+  | "clusters"
+  | "lyrics"
 export type JobStatus =
   | "pending"
   | "running"
@@ -20,6 +33,7 @@ export interface Job {
   done: number
   detail: string
   error: string
+  updated_at: string
 }
 
 export interface Totals {
@@ -78,6 +92,9 @@ export interface TrackDetail {
   mood_sad?: number | null
   mood_relaxed?: number | null
   mood_aggressive?: number | null
+  mood_electronic?: number | null
+  mood_acoustic?: number | null
+  mood_party?: number | null
   mood_epic?: number | null
   mood_dark?: number | null
   mood_romantic?: number | null
@@ -117,6 +134,9 @@ export interface TrackListItem {
   mood_sad?: number | null
   mood_relaxed?: number | null
   mood_aggressive?: number | null
+  mood_electronic?: number | null
+  mood_acoustic?: number | null
+  mood_party?: number | null
   features_source?: string
 }
 

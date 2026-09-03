@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     audio_analysis_limit: int = 5
     analyze_full_max: int = 300
     audio_workers: int = 2
+    # параллельных потоков анализа, когда аудио уже в кэше (сеть не нужна);
+    # узкое место — CPU: повышай до разумного числа ядер
+    audio_workers_cached: int = 8
     audio_delete_after: bool = False
     cluster_k: int = 0
     mb_user_agent: str = (
@@ -44,7 +47,11 @@ class Settings(BaseSettings):
         return self.data_dir / "uploads"
 
     def ensure_dirs(self) -> None:
-        for p in (self.data_dir, self.audio_dir, self.uploads_dir):
+        for p in (
+            self.data_dir,
+            self.audio_dir,
+            self.uploads_dir,
+        ):
             p.mkdir(parents=True, exist_ok=True)
 
 

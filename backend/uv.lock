@@ -1,6 +1,11 @@
 version = 1
 revision = 3
 requires-python = ">=3.14"
+resolution-markers = [
+    "platform_machine == 'x86_64' and sys_platform == 'darwin'",
+    "sys_platform != 'darwin'",
+    "platform_machine != 'x86_64' and sys_platform == 'darwin'",
+]
 
 [[package]]
 name = "annotated-doc"
@@ -231,6 +236,36 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/60/8b/32f9823da46cde7df2087faa08cd98d01b908f8dcab982cdba9c84e85355/decorator-5.3.1.tar.gz", hash = "sha256:4cbcdd55a6efadb9dbea26b858f4fb3264567b52d69ca0d25b721b553f60ea82", size = 58084, upload-time = "2026-05-18T06:03:28.057Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/05/7f/798705f5296a58ca505d600456748d1be48078eac8a7050d8a98bc9edb89/decorator-5.3.1-py3-none-any.whl", hash = "sha256:f47fe6fdbd2edd623ecfe36875d37aba411624e2670dd395dddae1358689bb3c", size = 10365, upload-time = "2026-05-18T06:03:26.517Z" },
+]
+
+[[package]]
+name = "essentia"
+version = "2.1b6.dev1438"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pyyaml" },
+    { name = "six" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5c/b3/26c54a8fd03b0378574767e4e9fda3ad41f68dba95649e346e9895d236bd/essentia-2.1b6.dev1438-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:3a4a51f7b59d76b9beb9a1aacdaa9b9c0de89f14b02ab45050f86230241044c5", size = 20494034, upload-time = "2026-05-19T16:25:49.379Z" },
+    { url = "https://files.pythonhosted.org/packages/af/eb/e823082c6e9a048597c4dfc4aecc8dde4becf99050c78cdbe117e500ec33/essentia-2.1b6.dev1438-cp314-cp314-macosx_15_0_x86_64.whl", hash = "sha256:b387e374008ab3e8f72fbc93d0c91c7fde97da71d26598f19a84750ff870582b", size = 22552441, upload-time = "2026-05-19T16:25:53.489Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/dc/feafca6d0989e40a324b5e977054ec1eb7a7d93260e023b4e5c5071202c7/essentia-2.1b6.dev1438-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:1ee6107fe63fb3b50f8aa68466951f6ca1e162a700d8deffd46ab0506dab9acb", size = 14104978, upload-time = "2026-05-19T16:25:56.314Z" },
+]
+
+[[package]]
+name = "essentia-tensorflow"
+version = "2.1b6.dev1438"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pyyaml" },
+    { name = "six" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5b/27/23fdcd5408ea65af81460cf6811c8f60fd2170d0598687d38608fe226c59/essentia_tensorflow-2.1b6.dev1438-cp314-cp314-macosx_15_0_arm64.whl", hash = "sha256:c50c41f3d4cbc6e981dbdd3e32465dcf4a765b38d835ceb26c0206f12108d192", size = 98786744, upload-time = "2026-05-19T16:26:01.685Z" },
+    { url = "https://files.pythonhosted.org/packages/63/56/410d1d5170a0ca064381fdf2aaef280186075ba1389a380a63ecdd5f8bc8/essentia_tensorflow-2.1b6.dev1438-cp314-cp314-macosx_15_0_x86_64.whl", hash = "sha256:5b94689d9ef5bf69af826b06f2f70e33e950d74e68d0d8a069d7173fbd1560e2", size = 122087735, upload-time = "2026-05-19T16:26:09.625Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/64/a105f342b01776aafde9f17c6d9011c4f27c6d1b3c9abe4820e2339d7b0f/essentia_tensorflow-2.1b6.dev1438-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:429959a1b0ef1af3dc40d56aac8ad5d8999af43c8159a10662d64baab602831f", size = 291874340, upload-time = "2026-05-19T16:26:23.128Z" },
 ]
 
 [[package]]
@@ -829,6 +864,15 @@ wheels = [
 ]
 
 [[package]]
+name = "six"
+version = "1.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
 name = "soundfile"
 version = "0.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1155,6 +1199,8 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "bgutil-ytdlp-pot-provider" },
+    { name = "essentia" },
+    { name = "essentia-tensorflow" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
@@ -1174,6 +1220,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bgutil-ytdlp-pot-provider", specifier = ">=1.3.1" },
+    { name = "essentia", specifier = ">=2.1b6.dev1438" },
+    { name = "essentia-tensorflow", specifier = ">=2.1b6.dev1438" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "jinja2", specifier = ">=3.1" },

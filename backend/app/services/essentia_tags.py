@@ -1,4 +1,4 @@
-"""Тегирование треков моделями Essentia (полная замена YAMNet).
+"""Тегирование треков моделями Essentia (Discogs-EffNet + головы).
 
 Архитектура:
 - Discogs-EffNet (TensorflowPredictEffnetDiscogs): два выхода —
@@ -7,38 +7,82 @@
 - Головы на эмбеддингах (TensorflowPredict2D):
   voice_instrumental — вокал/инструментал (калиброванная вероятность),
   mtg_jamendo_instrument — 40 инструментальных классов,
-  mtg_jamendo_moodtheme — 56 mood/theme тегов → наши 8 настроений.
+  mtg_jamendo_moodtheme — 56 mood/theme тегов (сырые теги + 4 настроения),
+  danceability — танцевальность,
+  mood_happy/sad/relaxed/aggressive/electronic/acoustic/party — настроения,
+  nsynth_bright_dark — яркость/темнота звука.
 
-Формат результата совпадает со старым tags-json:
-{"genres": [{name, score}], "instruments": [{name, score}],
- "moods": {mood_*: 0..1}, "vocal_ratio": 0..1}
+ensure_models() скачивает отсутствующие .pb/.json с essentia.upf.edu;
+отсутствие модели — ошибка (fallback-эвристик нет).
+
+Формат результата analyze():
+{"genres": [{name, score}] (топ-3),
+ "styles": {style: score} (топ-20, ≥0.02),
+ "instruments": [{name, score}] (все ≥0.05),
+ "moods": {mood_*: 0..1} (11: 7 модельных + 4 moodtheme),
+ "moodtags": {tag: score} (≥0.05),
+ "vocal_ratio": 0..1,
+ "embedding": base64(float16[1280])}
 """
 
+import base64
 import json
+import os
 import threading
+from pathlib import Path
 
 import numpy as np
 
 from app.config import settings
 
+# глушим INFO/WARNING-спам TensorFlow про CUDA-перебор (до загрузки TF)
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+
+import essentia
+
+essentia.log.infoActive = False
+
 MODELS_DIR = settings.data_dir / "models"
-DISCOGS_PB = "discogs-effnet-bs64-1.pb"
+DISCOGS_PB = "discogs-effnet-bs64-1"
+ZOO_BASE = "https://essentia.upf.edu/models/classification-heads"
 
-# порог отсечения слабых тегов (сигмоиды jamendo-голов, softmax discogs)
+# голова → каталог в зоопарке (имя файла = {task}-discogs-effnet-1)
+HEADS = [
+    "voice_instrumental",
+    "mtg_jamendo_instrument",
+    "mtg_jamendo_moodtheme",
+    "danceability",
+    "mood_happy",
+    "mood_sad",
+    "mood_relaxed",
+    "mood_aggressive",
+    "mood_acoustic",
+    "mood_electronic",
+    "mood_party",
+    "nsynth_bright_dark",
+]
+
+# порог отсечения слабых тегов
 GENRE_MIN_SCORE = 0.05
-INSTRUMENT_MIN_SCORE = 0.10
+INSTRUMENT_MIN_SCORE = 0.05
+STYLE_MIN_SCORE = 0.02
+MOODTAG_MIN_SCORE = 0.05
+STYLES_TOP_N = 20
 
-# moodtheme-теги → наши 8 настроений (каждый тег в одной группе)
-MOOD_MAP = {
-    "mood_happy": (
-        "happy", "fun", "funny", "positive", "hopeful", "cool", "summer",
-        "uplifting", "upbeat",
-    ),
-    "mood_sad": ("sad", "melancholic", "emotional", "ballad"),
-    "mood_relaxed": (
-        "relaxing", "calm", "soft", "meditative", "slow", "background",
-    ),
-    "mood_aggressive": ("heavy", "fast", "energetic", "sport", "party"),
+# настроения из выделенных модельных голов (прямые вероятности)
+MODEL_MOODS = [
+    "mood_happy",
+    "mood_sad",
+    "mood_relaxed",
+    "mood_aggressive",
+    "mood_electronic",
+    "mood_acoustic",
+    "mood_party",
+]
+
+# настроения из moodtheme-тегов (выделенных моделей нет): средняя
+# вероятность тегов группы — абсолютная интенсивность 0..1
+THEME_MOODS = {
     "mood_epic": (
         "epic", "dramatic", "powerful", "action", "trailer", "adventure",
         "motivational", "inspiring",
@@ -70,48 +114,141 @@ INSTRUMENT_NAMES = {
 }
 
 _local = threading.local()
+_dl_lock = threading.Lock()
+
+
+def _doh_resolve(host: str) -> str | None:
+    """Резолв через DNS-over-HTTPS (локальный DNS может не знать домен)."""
+    try:
+        import httpx
+
+        r = httpx.get(
+            f"https://dns.google/resolve?name={host}&type=A", timeout=10
+        )
+        for ans in r.json().get("Answer", []):
+            if ans.get("type") == 1:
+                return str(ans["data"])
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def download_model_file(url: str, dest: Path) -> None:
+    """Скачивает файл модели; при проблемах DNS — повтор через DoH-IP."""
+    import httpx
+    import socket
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    host = "essentia.upf.edu"
+    try:
+        resp = httpx.get(url, timeout=120, follow_redirects=True)
+        resp.raise_for_status()
+    except httpx.HTTPError:
+        with _dl_lock:
+            ip = _doh_resolve(host)
+            if not ip:
+                raise RuntimeError(
+                    f"essentia: {url} недоступен (DNS и DoH не сработали)"
+                )
+            orig = socket.getaddrinfo
+
+            def patched(h, *args, **kwargs):
+                return orig(ip if h == host else h, *args, **kwargs)
+
+            socket.getaddrinfo = patched
+            try:
+                resp = httpx.get(url, timeout=120, follow_redirects=True)
+                resp.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise RuntimeError(
+                    f"essentia: не удалось скачать {url}: "
+                    f"{type(exc).__name__}"
+                ) from exc
+            finally:
+                socket.getaddrinfo = orig
+    dest.write_bytes(resp.content)
+
+
+def ensure_models(progress_cb=None, should_stop=None) -> None:
+    """Скачивает отсутствующие backbone и головы; ошибка — исключение.
+
+    progress_cb(сообщение) — отчёт о ходе; should_stop() — проверка отмены
+    (между файлами загрузка прекращается, недокачанные остаются на след. раз).
+    """
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    wanted = [(DISCOGS_PB, DISCOGS_PB)] + [
+        (h, f"{h}-discogs-effnet-1") for h in HEADS
+    ]
+    for task, base in wanted:
+        for ext in (".pb", ".json"):
+            if should_stop is not None and should_stop():
+                return
+            path = MODELS_DIR / f"{base}{ext}"
+            if path.exists() and path.stat().st_size > 0:
+                continue
+            url = f"{ZOO_BASE}/{task}/{base}{ext}"
+            if progress_cb is not None:
+                progress_cb(f"скачивание модели {base}{ext}")
+            download_model_file(url, path)
+
+
+def _positive_class(classes: list[str]) -> int:
+    """Индекс «положительного» класса (не not_*/non_*)."""
+    for i, c in enumerate(classes):
+        low = c.lower()
+        if not low.startswith(("not_", "non_", "un")) and low not in (
+            "dark",
+        ):
+            return i
+    return 0
 
 
 def _algorithms() -> dict:
     """Тред-локальные инстансы (инференс не потокобезопасен)."""
     if getattr(_local, "algos", None) is not None:
         return _local.algos
-    import os
-
-    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
     from essentia.standard import TensorflowPredict2D, TensorflowPredictEffnetDiscogs
 
-    with open(MODELS_DIR / DISCOGS_PB.replace(".pb", ".json")) as f:
-        meta = json.load(f)
-    styles = meta["classes"]
+    ensure_models()
 
-    def head(name):
-        with open(MODELS_DIR / f"{name}-discogs-effnet-1.json") as f:
+    def head(name: str):
+        meta_path = MODELS_DIR / f"{name}-discogs-effnet-1.json"
+        with open(meta_path) as f:
             m = json.load(f)
         alg = TensorflowPredict2D(
             graphFilename=str(MODELS_DIR / f"{name}-discogs-effnet-1.pb"),
             input=m["schema"]["inputs"][0]["name"],
             output=m["schema"]["outputs"][0]["name"],
         )
-        return alg, m["classes"]
+        classes = [str(c) for c in m["classes"]]
+        return alg, classes
 
-    voice_alg, voice_classes = head("voice_instrumental")
-    inst_alg, inst_classes = head("mtg_jamendo_instrument")
-    mood_alg, mood_classes = head("mtg_jamendo_moodtheme")
-    _local.algos = {
+    def _head_checked(name: str):
+        try:
+            return head(name)
+        except Exception as exc:
+            raise RuntimeError(
+                f"essentia: голова {name} не загрузилась: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+    with open(MODELS_DIR / f"{DISCOGS_PB}.json") as f:
+        styles = json.load(f)["classes"]
+
+    algos: dict = {
         "act": TensorflowPredictEffnetDiscogs(
-            graphFilename=str(MODELS_DIR / DISCOGS_PB),
+            graphFilename=str(MODELS_DIR / f"{DISCOGS_PB}.pb"),
             output="PartitionedCall",
         ),
         "emb": TensorflowPredictEffnetDiscogs(
-            graphFilename=str(MODELS_DIR / DISCOGS_PB),
+            graphFilename=str(MODELS_DIR / f"{DISCOGS_PB}.pb"),
             output="PartitionedCall:1",
         ),
         "styles": styles,
-        "voice": (voice_alg, voice_classes),
-        "inst": (inst_alg, inst_classes),
-        "mood": (mood_alg, mood_classes),
     }
+    for h in HEADS:
+        algos[h] = _head_checked(h)
+    _local.algos = algos
     return _local.algos
 
 
@@ -120,32 +257,42 @@ def prettify_style(style: str) -> str:
     return " · ".join(p.strip() for p in style.split("---") if p.strip())
 
 
-def analyze(y16: np.ndarray) -> dict | None:
-    """Теги трека по сигналу 16 кГц (моно, float).
+def analyze(y16: np.ndarray) -> dict:
+    """Полный тег-пакет трека по сигналу 16 кГц (моно, float).
 
-    Возвращает словарь для AudioFeatures.tags (json) + vocal_ratio,
-    None — если модели недоступны.
+    Любая ошибка модели/инференса пробрасывается выше — тихих
+    заглушек нет.
     """
-    try:
-        a = _algorithms()
-    except Exception:
-        return None
+    a = _algorithms()
     audio = np.ascontiguousarray(y16, dtype=np.float32)
 
+    emb_raw = np.asarray(a["emb"](audio))  # (кадры, 1280)
+    embeddings = emb_raw if emb_raw.ndim == 2 else emb_raw[None, :]
+    pooled = embeddings.mean(axis=0)
     activations = np.asarray(a["act"](audio)).mean(axis=0)
-    embeddings = np.asarray(a["emb"](audio))
 
-    voice_alg, voice_classes = a["voice"]
-    v_pred = np.asarray(voice_alg(embeddings)).mean(axis=0)
-    v = dict(zip(voice_classes, v_pred))
+    def head_prob(name: str) -> tuple[float, dict[str, float]]:
+        alg, classes = a[name]
+        pred = np.asarray(alg(embeddings)).mean(axis=0)
+        scores = {str(c): float(v) for c, v in zip(classes, pred)}
+        return scores[classes[_positive_class(classes)]], scores
 
-    inst_alg, inst_classes = a["inst"]
+    vocal_alg, vocal_classes = a["voice_instrumental"]
+    v_pred = np.asarray(vocal_alg(embeddings)).mean(axis=0)
+    vocal_scores = {str(c): float(v) for c, v in zip(vocal_classes, v_pred)}
+    vocal_ratio = vocal_scores.get("voice", next(iter(vocal_scores.values())))
+
+    inst_alg, inst_classes = a["mtg_jamendo_instrument"]
     i_pred = np.asarray(inst_alg(embeddings)).mean(axis=0)
     inst = dict(zip(inst_classes, i_pred))
 
-    mood_alg, mood_classes = a["mood"]
-    m_pred = np.asarray(mood_alg(embeddings)).mean(axis=0)
-    theme = dict(zip(mood_classes, m_pred))
+    theme_alg, theme_classes = a["mtg_jamendo_moodtheme"]
+    m_pred = np.asarray(theme_alg(embeddings)).mean(axis=0)
+    theme = {str(c): float(v) for c, v in zip(theme_classes, m_pred)}
+
+    danceability, _ = head_prob("danceability")
+    acoustic_prob, _ = head_prob("mood_acoustic")
+    bright_scores = head_prob("nsynth_bright_dark")[1]
 
     genres = [
         {"name": prettify_style(a["styles"][i]), "score": round(float(s), 3)}
@@ -154,25 +301,44 @@ def analyze(y16: np.ndarray) -> dict | None:
         )[:3]
         if float(s) >= GENRE_MIN_SCORE
     ]
+    styles = {
+        prettify_style(a["styles"][i]): round(float(s), 3)
+        for i, s in sorted(enumerate(activations), key=lambda x: -x[1])[
+            :STYLES_TOP_N
+        ]
+        if float(s) >= STYLE_MIN_SCORE
+    }
     instruments = [
         {"name": INSTRUMENT_NAMES.get(n, n), "score": round(float(s), 3)}
-        for n, s in sorted(inst.items(), key=lambda x: -x[1])[:5]
+        for n, s in sorted(inst.items(), key=lambda x: -x[1])
         if float(s) >= INSTRUMENT_MIN_SCORE
     ]
-
-    # 8 настроений: сумма тегов группы, нормировка на максимум
-    moods_raw = {
-        mood: sum(float(theme.get(t, 0.0)) for t in tags)
-        for mood, tags in MOOD_MAP.items()
+    moodtags = {
+        str(t): round(v, 3)
+        for t, v in sorted(theme.items(), key=lambda x: -x[1])
+        if v >= MOODTAG_MIN_SCORE
     }
-    top = max(moods_raw.values(), default=0.0)
-    moods = (
-        {k: round(v / top, 3) for k, v in moods_raw.items()} if top > 0 else {}
-    )
+
+    moods: dict[str, float] = {}
+    for m in MODEL_MOODS:
+        moods[m] = round(head_prob(m)[0], 3)
+    for mood, tags in THEME_MOODS.items():
+        vals = [theme.get(t, 0.0) for t in tags if t in theme]
+        moods[mood] = round(float(np.mean(vals)) if vals else 0.0, 3)
+
+    embedding = base64.b64encode(
+        np.asarray(pooled, dtype=np.float16).tobytes()
+    ).decode("ascii")
 
     return {
         "genres": genres,
+        "styles": styles,
         "instruments": instruments,
         "moods": moods,
-        "vocal_ratio": round(float(v.get("voice", 0.0)), 3),
+        "moodtags": moodtags,
+        "vocal_ratio": round(float(vocal_ratio), 3),
+        "danceability": round(float(danceability), 3),
+        "acousticness": round(float(acoustic_prob), 3),
+        "brightness": round(float(bright_scores.get("bright", 0.0)), 3),
+        "embedding": embedding,
     }

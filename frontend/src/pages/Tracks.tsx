@@ -6,14 +6,9 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query"
-import { useVirtualizer } from "@tanstack/react-virtual"
+import { useWindowVirtualizer } from "@tanstack/react-virtual"
 import { Link, useNavigate } from "react-router-dom"
-import {
-  Ban,
-  Check,
-  EyeOff,
-  Music,
-} from "lucide-react"
+import { Ban, Check, EyeOff } from "lucide-react"
 
 import { api, type TrackListItem, type TrackSort } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -91,6 +86,9 @@ function techTooltip(t: TrackListItem): string {
       `грусть ${Math.round((t.mood_sad ?? 0) * 100)}%`,
       `спокойствие ${Math.round((t.mood_relaxed ?? 0) * 100)}%`,
       `агрессия ${Math.round((t.mood_aggressive ?? 0) * 100)}%`,
+      `электронность ${Math.round((t.mood_electronic ?? 0) * 100)}%`,
+      `акустика ${Math.round((t.mood_acoustic ?? 0) * 100)}%`,
+      `танцевальность-вечеринки ${Math.round((t.mood_party ?? 0) * 100)}%`,
       `эпичность ${Math.round((t.mood_epic ?? 0) * 100)}%`,
       `мрачность ${Math.round((t.mood_dark ?? 0) * 100)}%`,
       `романтика ${Math.round((t.mood_romantic ?? 0) * 100)}%`,
@@ -106,9 +104,14 @@ function techTooltip(t: TrackListItem): string {
 }
 
 const SORT_COLUMNS: { key: TrackSort; label: string; align?: "right" }[] = [
+  { key: "tempo", label: "BPM", align: "right" },
+  { key: "energy", label: "энергия", align: "right" },
+  { key: "danceability", label: "танц.", align: "right" },
+  { key: "acousticness", label: "акуст.", align: "right" },
   { key: "play_count", label: "просл.", align: "right" },
   { key: "first_listen", label: "первое", align: "right" },
   { key: "last_listen", label: "последнее", align: "right" },
+  { key: "duration", label: "длит.", align: "right" },
 ]
 
 export function Tracks() {
@@ -123,11 +126,24 @@ export function Tracks() {
   const [genre, setGenre] = useState("")
   const [language, setLanguage] = useState("")
   const [instrumental, setInstrumental] = useState(false)
+  const [showFilters, setShowFilters] = useState(false)
+
+  const applySearch = () => setQ(input.trim())
 
   useEffect(() => {
     const t = setTimeout(() => setQ(input.trim()), 300)
     return () => clearTimeout(t)
   }, [input])
+
+  const clearFilters = () => {
+    setInput("")
+    setQ("")
+    setClusterId(null)
+    setHidden(false)
+    setGenre("")
+    setLanguage("")
+    setInstrumental(false)
+  }
 
   const { data: clusters } = useQuery({
     queryKey: ["clusters"],
@@ -198,30 +214,50 @@ export function Tracks() {
   )
   const total = data?.pages[0]?.total ?? 0
 
-  const parentRef = useRef<HTMLDivElement>(null)
-  const virtualizer = useVirtualizer({
+  const controlsRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const [scrollMargin, setScrollMargin] = useState(0)
+  const virtualizer = useWindowVirtualizer({
     count: rows.length,
-    getScrollElement: () => parentRef.current,
     estimateSize: () => 60,
     overscan: 10,
+    scrollMargin,
   })
 
   useEffect(() => {
-    parentRef.current?.scrollTo({ top: 0 })
+    window.scrollTo({ top: 0 })
   }, [q, sort, order, clusterId, hidden, genre, language, instrumental])
+
+  useEffect(() => {
+    const el = controlsRef.current
+    if (!el) return
+    const measure = () => {
+      document.documentElement.style.setProperty(
+        "--controls-h",
+        `${el.offsetHeight}px`
+      )
+      const list = listRef.current
+      if (list) {
+        setScrollMargin(list.getBoundingClientRect().top + window.scrollY)
+      }
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   const sentinelRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = sentinelRef.current
-    const root = parentRef.current
-    if (!el || !root) return
+    if (!el) return
     const obs = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting && hasNextPage && !isFetchingNextPage) {
           fetchNextPage()
         }
       },
-      { root, rootMargin: "800px 0px" }
+      { rootMargin: "800px 0px" }
     )
     obs.observe(el)
     return () => obs.disconnect()
@@ -238,113 +274,146 @@ export function Tracks() {
 
   return (
     <div className="flex flex-col gap-2.5">
-      <h1 className="text-lg font-bold text-black">Вся музыка</h1>
+      <div
+        ref={controlsRef}
+        className="sticky z-20 flex flex-col gap-2.5 bg-background pb-1"
+        style={{ top: "var(--header-h, 0px)" }}
+      >
+        <h1 className="text-lg font-bold text-black text-center">Вся музыка</h1>
 
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Input
-          type="search"
-          placeholder="Поиск по названию или каналу…"
-          className="w-full max-w-md"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
-        <Select
-          value={clusterId != null ? String(clusterId) : "all"}
-          onValueChange={(v) => setClusterId(v === "all" ? null : Number(v))}
+        <form
+          className="flex w-full items-center justify-center gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault()
+            applySearch()
+          }}
         >
-          <SelectTrigger className="w-60">
-            <SelectValue placeholder="Все настроения" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Все настроения</SelectItem>
-            {clusters?.map((c) => (
-              <SelectItem key={c.id} value={String(c.id)}>
-                {c.name} · {c.size}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button
-          variant={hidden ? "default" : "outline"}
-          size="sm"
-          onClick={() => setHidden((h) => !h)}
-        >
-          <EyeOff />
-          Исключённые
-        </Button>
-        <Select
-          value={genre || "any"}
-          onValueChange={(v) => setGenre(v === "any" ? "" : v)}
-        >
-          <SelectTrigger className="w-44">
-            <SelectValue placeholder="Любой жанр" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">Любой жанр</SelectItem>
-            {(genres ?? []).map((g) => (
-              <SelectItem key={g.name} value={g.name}>
-                {g.name_ru} ({g.count})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={language || "any"}
-          onValueChange={(v) => setLanguage(v === "any" ? "" : v)}
-        >
-          <SelectTrigger className="w-40">
-            <SelectValue placeholder="Любой язык" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">Любой язык</SelectItem>
-            {LANG_OPTIONS.map((l) => (
-              <SelectItem key={l.value} value={l.value}>
-                {l.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button
-          variant={instrumental ? "default" : "outline"}
-          size="sm"
-          onClick={() => setInstrumental((v) => !v)}
-          title="Только треки без вокала"
-        >
-          <Music />
-          Инструментал
-        </Button>
-      </div>
+          <Input
+            type="search"
+            placeholder="Поиск по названию или каналу…"
+            className="max-w-md flex-1"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+          />
+          <Button type="submit">Поиск</Button>
+          <Button type="button" variant="secondary" onClick={clearFilters}>
+            Очистить
+          </Button>
+        </form>
 
-      {hidden && (
-        <p className="text-muted-foreground text-sm">
-          Треки, помеченные как «не музыка». Кнопка ✓ возвращает трек в
-          библиотеку.
-        </p>
-      )}
+        <div className="flex justify-center">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowFilters((v) => !v)}
+          >
+            {showFilters ? "[Скрыть фильтры]" : "[Дополнительные фильтры]"}
+          </Button>
+        </div>
 
-      {isPending && <p className="text-muted-foreground">Загрузка…</p>}
-      {isError && <p>Не удалось загрузить данные.</p>}
+        {showFilters && (
+          <div className="flex flex-col items-center gap-2 border p-2">
+            <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-1">
+              <label className="flex cursor-pointer select-none items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={hidden}
+                  onChange={(e) => setHidden(e.target.checked)}
+                />
+                Исключённые
+              </label>
+              <label className="flex cursor-pointer select-none items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={instrumental}
+                  onChange={(e) => setInstrumental(e.target.checked)}
+                  title="Только треки без вокала"
+                />
+                Инструментал
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              <Select
+                value={clusterId != null ? String(clusterId) : "all"}
+                onValueChange={(v) => setClusterId(v === "all" ? null : Number(v))}
+              >
+                <SelectTrigger className="w-60">
+                  <SelectValue placeholder="Все настроения" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Все настроения</SelectItem>
+                  {clusters?.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)}>
+                      {c.name} · {c.size}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={genre || "any"}
+                onValueChange={(v) => setGenre(v === "any" ? "" : v)}
+              >
+                <SelectTrigger className="w-44">
+                  <SelectValue placeholder="Любой жанр" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="any">Любой жанр</SelectItem>
+                  {(genres ?? []).map((g) => (
+                    <SelectItem key={g.name} value={g.name}>
+                      {g.name_ru} ({g.count})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={language || "any"}
+                onValueChange={(v) => setLanguage(v === "any" ? "" : v)}
+              >
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Любой язык" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="any">Любой язык</SelectItem>
+                  {LANG_OPTIONS.map((l) => (
+                    <SelectItem key={l.value} value={l.value}>
+                      {l.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
 
-      {data && total === 0 && !q && (
-        <Alert>
-          <AlertDescription>
-            Нет музыки.{" "}
-            <Link to="/import" className="underline">
-              Импортируйте
-            </Link>{" "}
-            историю и запустите фильтр музыки.
-          </AlertDescription>
-        </Alert>
-      )}
+        {hidden && (
+          <p className="text-muted-foreground text-sm">
+            Треки, помеченные как «не музыка». Кнопка ✓ возвращает трек в
+            библиотеку.
+          </p>
+        )}
 
-      {data && total === 0 && q && (
-        <p className="text-muted-foreground text-sm">
-          Ничего не найдено по запросу «{q}».
-        </p>
-      )}
+        {isPending && <p className="text-muted-foreground">Загрузка…</p>}
+        {isError && <p>Не удалось загрузить данные.</p>}
 
-      {data && total > 0 && (
-        <>
+        {data && total === 0 && !q && (
+          <Alert>
+            <AlertDescription>
+              Нет музыки.{" "}
+              <Link to="/import" className="underline">
+                Импортируйте
+              </Link>{" "}
+              историю и запустите фильтр музыки.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {data && total === 0 && q && (
+          <p className="text-muted-foreground text-sm">
+            Ничего не найдено по запросу «{q}».
+          </p>
+        )}
+
+        {data && total > 0 && (
           <p className="text-muted-foreground text-sm">
             {q ? (
               <>
@@ -358,25 +427,25 @@ export function Tracks() {
               </>
             )}
           </p>
+        )}
+      </div>
 
-          <div
-            ref={parentRef}
-            className="h-[calc(100svh-13rem)] min-h-80 overflow-y-auto border border-[#999999]"
-          >
+      {data && total > 0 && (
+        <>
+          <div ref={listRef} className="border border-[#999999]">
             <div
               className={cn(
                 GRID,
-                "sticky top-0 z-10 border-b border-[#999999] bg-[#eeeeee] py-1 text-xs font-bold text-black whitespace-nowrap"
+                "sticky z-10 min-w-[80rem] border-b border-[#999999] bg-[#eeeeee] py-1 text-xs font-bold text-black whitespace-nowrap"
               )}
+              style={{
+                top: "calc(var(--header-h, 0px) + var(--controls-h, 0px))",
+              }}
             >
               <span>#</span>
               <span />
               <span>Название</span>
               <span>Настроение</span>
-              <span className="text-right">BPM</span>
-              <span className="text-right">энергия</span>
-              <span className="text-right">танц.</span>
-              <span className="text-right">акуст.</span>
               {SORT_COLUMNS.map((col) => (
                 <button
                   key={col.key}
@@ -397,11 +466,11 @@ export function Tracks() {
                   ) : null}
                 </button>
               ))}
-              <span className="text-right">длит.</span>
               <span className="text-right">действия</span>
             </div>
 
             <div
+              className="min-w-[80rem]"
               style={{
                 height: virtualizer.getTotalSize(),
                 position: "relative",
@@ -419,7 +488,7 @@ export function Tracks() {
                       top: 0,
                       left: 0,
                       width: "100%",
-                      transform: `translateY(${vi.start}px)`,
+                      transform: `translateY(${vi.start - scrollMargin}px)`,
                     }}
                     className={cn(
                       GRID,
@@ -564,22 +633,20 @@ export function Tracks() {
                 )
               })}
             </div>
+          </div>
 
-            <div
-              ref={sentinelRef}
-              className="flex h-10 items-center justify-center"
-            >
-              {isFetchingNextPage && (
-                <span className="text-muted-foreground text-sm">
-                  Загрузка…
-                </span>
-              )}
-              {!hasNextPage && (
-                <span className="text-muted-foreground text-sm">
-                  Все {total.toLocaleString("ru-RU")} треков загружены
-                </span>
-              )}
-            </div>
+          <div
+            ref={sentinelRef}
+            className="flex h-10 items-center justify-center"
+          >
+            {isFetchingNextPage && (
+              <span className="text-muted-foreground text-sm">Загрузка…</span>
+            )}
+            {!hasNextPage && (
+              <span className="text-muted-foreground text-sm">
+                Все {total.toLocaleString("ru-RU")} треков загружены
+              </span>
+            )}
           </div>
         </>
       )}

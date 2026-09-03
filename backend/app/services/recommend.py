@@ -1,3 +1,4 @@
+import base64
 import json
 import math
 import time
@@ -37,6 +38,9 @@ MOOD_COLS = [
     "mood_sad",
     "mood_relaxed",
     "mood_aggressive",
+    "mood_electronic",
+    "mood_acoustic",
+    "mood_party",
     "mood_epic",
     "mood_dark",
     "mood_romantic",
@@ -44,14 +48,18 @@ MOOD_COLS = [
 ]
 
 # веса групп фич для похожести v2
-W_TIMBRE = 0.25
+W_TIMBRE = 0.15
+W_EMBEDDING = 0.30
 W_RHYTHM = 0.15
 W_HARMONY = 0.15
 W_MACRO = 0.10
+W_MOODS = 0.10
 W_INSTRUMENTS = 0.10
 W_GENRE = 0.10
 W_LYRICS = 0.075
 W_TOPICS = 0.075
+KEY_BONUS = 0.05  # скидка к дистанции гармонии за совпадение тональности
+KEY_CONF_GATE = 0.7  # минимальная mode_conf обоих треков для бонуса
 ARTIST_SHRINKAGE = 3.0
 MIN_V2_TRACKS = 2
 
@@ -63,6 +71,24 @@ def _parse(v: str | None) -> np.ndarray | None:
         return np.array(json.loads(v), dtype=float)
     except (ValueError, TypeError):
         return None
+
+
+def _parse_embedding(v: str | None) -> np.ndarray | None:
+    """base64(float16[1280]) из AudioFeatures.embedding → np.float32."""
+    if not v:
+        return None
+    try:
+        raw = base64.b64decode(v)
+        return np.frombuffer(raw, dtype=np.float16).astype(np.float32)
+    except (ValueError, TypeError):
+        return None
+
+
+def _vec_cosine_dist(a: np.ndarray, b: np.ndarray) -> float | None:
+    na, nb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
+    if na == 0.0 or nb == 0.0:
+        return None
+    return float(1.0 - float(a @ b) / (na * nb))
 
 
 def _v2_matrix(
@@ -133,46 +159,72 @@ def _v2_matrix(
     raw = np.vstack([smoothed(f) for f in usable])
     scaled = StandardScaler().fit_transform(raw)
     ids = [f.track_id for f in usable]
+    # 26 mfcc + 12 chroma + 7 contrast + 3 rhythm + 5 macro = 53
     groups: dict[str, dict[str, np.ndarray]] = {
-        "timbre": dict(zip(ids, scaled[:, 0:26])),
-        "harmony": dict(zip(ids, scaled[:, 26:38])),
-        "rhythm": dict(zip(ids, scaled[:, 38:41])),
-        "macro": dict(zip(ids, scaled[:, 41:46])),
+        "timbre": dict(zip(ids, scaled[:, 0:33])),
+        "harmony": dict(zip(ids, scaled[:, 33:45])),
+        "rhythm": dict(zip(ids, scaled[:, 45:48])),
+        "macro": dict(zip(ids, scaled[:, 48:53])),
     }
     return groups, usable
 
 
 GROUP_LABELS = {
+    "embedding": "по нейро-тембру",
     "timbre": "по тембру",
     "rhythm": "по ритму",
     "harmony": "по гармонии",
     "macro": "по характеру",
+    "moods": "по настроению",
     "instruments": "по инструментам",
     "genre": "по жанру",
     "lyrics": "по тексту",
     "topics": "по темам",
 }
 
-# размерности векторных групп (для нормализации масштаба L2-расстояний)
-GROUP_DIMS = {"timbre": 26, "harmony": 12, "rhythm": 3, "macro": 5}
+# размерности векторных групп (для нормализации масштаба L2-расстояний);
+# timbre = mfcc (26) + contrast (7), embedding — косинус, dim не важна
+GROUP_DIMS = {"timbre": 33, "harmony": 12, "rhythm": 3, "macro": 5}
 
 
-def _parse_tags(tags_json: str | None) -> tuple[dict[str, float], dict[str, float]]:
-    """(вектор жанров, вектор инструментов) из Essentia tags json."""
+def _parse_tags(tags_json: str | None) -> dict:
+    """Разбор Essentia tags json.
+
+    Жанры берутся из распределения стилей (топ-20), при отсутствии —
+    из старого списка топ-3. Также: инструменты и сырые moodtheme-теги.
+    """
     if not tags_json:
-        return {}, {}
+        return {}
     try:
         data = json.loads(tags_json)
     except ValueError:
-        return {}, {}
-    genres = {g["name"]: float(g.get("score", 0.0)) for g in data.get("genres", [])}
+        return {}
+    styles = {
+        str(name): float(score)
+        for name, score in (data.get("styles") or {}).items()
+    }
+    genres = (
+        styles
+        if styles
+        else {g["name"]: float(g.get("score", 0.0)) for g in data.get("genres", [])}
+    )
     instruments = {
         g["name"]: float(g.get("score", 0.0)) for g in data.get("instruments", [])
     }
-    return genres, instruments
+    moodtags = {
+        str(name): float(score)
+        for name, score in (data.get("moodtags") or {}).items()
+    }
+    return {
+        "genres": genres,
+        "instruments": instruments,
+        "moodtags": moodtags,
+    }
 
 
-def _cosine_dist(a: dict[str, float], b: dict[str, float]) -> float | None:
+def _cosine_dist(
+    a: dict[str, float] | None, b: dict[str, float] | None
+) -> float | None:
     """Косинусное расстояние между разреженными векторами-словарями."""
     if not a or not b:
         return None
@@ -191,15 +243,17 @@ def _load_semantic(
     dict[str, dict[str, float]],
     dict[str, dict[str, float]],
     dict[str, object],
+    dict[str, dict[str, float]],
 ]:
     """Теговые и текстовые данные треков.
 
-    Возвращает (genres, instruments, topics, tfidf):
-    genres/instruments/topics — {track_id: вектор-словарь};
+    Возвращает (genres, instruments, topics, tfidf, moodtags):
+    genres/instruments/topics/moodtags — {track_id: вектор-словарь};
     tfidf — {track_id: нормированный разреженный вектор текста}.
     """
     genres: dict[str, dict[str, float]] = {}
     instruments: dict[str, dict[str, float]] = {}
+    moodtags: dict[str, dict[str, float]] = {}
     topics: dict[str, dict[str, float]] = {}
     texts_by_lang: dict[str, dict[str, str]] = {}
     id_set = set(ids)
@@ -208,11 +262,13 @@ def _load_semantic(
             AudioFeatures.track_id.in_(id_set)  # type: ignore[union-attr]
         )
     ).all():
-        g, i = _parse_tags(f[1])
-        if g:
-            genres[f[0]] = g
-        if i:
-            instruments[f[0]] = i
+        parsed = _parse_tags(f[1])
+        if parsed.get("genres"):
+            genres[f[0]] = parsed["genres"]
+        if parsed.get("instruments"):
+            instruments[f[0]] = parsed["instruments"]
+        if parsed.get("moodtags"):
+            moodtags[f[0]] = parsed["moodtags"]
     for row in session.exec(
         select(Lyrics.track_id, Lyrics.language, Lyrics.topics, Lyrics.text).where(  # type: ignore[arg-type]
             Lyrics.track_id.in_(id_set)  # type: ignore[union-attr]
@@ -242,7 +298,7 @@ def _load_semantic(
         # TfidfVectorizer по умолчанию даёт L2-нормированные строки
         for tid, row_idx in zip(texts.keys(), range(matrix.shape[0])):
             tfidf[tid] = matrix[row_idx]
-    return genres, instruments, topics, tfidf
+    return genres, instruments, topics, tfidf, moodtags
 
 
 def _tfidf_dist(tfidf: dict[str, object], a: str, b: str) -> float | None:
@@ -266,12 +322,7 @@ def _essentia_tags_vec(tags_json: str) -> dict[str, any]:
         g["name"]: float(g.get("score", 0.0)) for g in data.get("instruments", [])
     }
     moods = data.get("moods", {})
-    # ensure all 8 moods present as float
-    MOOD_ORDER = [
-        "mood_happy", "mood_sad", "mood_relaxed", "mood_aggressive",
-        "mood_epic", "mood_dark", "mood_romantic", "mood_atmospheric"
-    ]
-    mood_vec = {k: float(moods.get(k, 0.0)) for k in MOOD_ORDER}
+    mood_vec = {k: float(moods.get(k, 0.0)) for k in MOOD_COLS}
     vocal = float(data.get("vocal_ratio", 0.0))
     return {"genres": genres, "instruments": instruments, "moods": mood_vec, "vocal": vocal}
 
@@ -372,10 +423,12 @@ def similar_tracks_v2(
     весов доступных групп (треки без текстов не штрафуются).
     """
     weights = {
+        "embedding": W_EMBEDDING,
         "timbre": W_TIMBRE,
         "rhythm": W_RHYTHM,
         "harmony": W_HARMONY,
         "macro": W_MACRO,
+        "moods": W_MOODS,
         "instruments": W_INSTRUMENTS,
         "genre": W_GENRE,
         "lyrics": W_LYRICS,
@@ -389,7 +442,20 @@ def similar_tracks_v2(
         if len(usable) < MIN_V2_TRACKS or track_id not in groups["timbre"]:
             return None
         ids = [f.track_id for f in usable]
-        genres, instruments, topics, tfidf = _load_semantic(session, ids)
+        genres, instruments, topics, tfidf, moodtags = _load_semantic(session, ids)
+
+        # нейро-эмбеддинги, настроения и тональности из колонок фич
+        embedding_map = {
+            f.track_id: _parse_embedding(f.embedding) for f in usable
+        }
+        moods_map = {
+            f.track_id: {c: float(getattr(f, c)) for c in MOOD_COLS}
+            for f in usable
+        }
+        keys_map = {
+            f.track_id: (f.key or "", float(f.mode_conf or 0.0))
+            for f in usable
+        }
 
         def pair_distance(other_id: str) -> tuple[float | None, str]:
             """(общий скор, ближайшая группа); None — нет общих групп."""
@@ -399,22 +465,52 @@ def similar_tracks_v2(
                 # чтобы масштаб был сопоставим с косинусными расстояниями 0..2
                 d = float(np.linalg.norm(groups[g][track_id] - groups[g][other_id]))
                 per_group[g] = d / math.sqrt(dim)
+            emb_a = embedding_map.get(track_id)
+            emb_b = embedding_map.get(other_id)
+            if emb_a is not None and emb_b is not None:
+                d = _vec_cosine_dist(emb_a, emb_b)
+                if d is not None:
+                    per_group["embedding"] = d
+            mood_d = _cosine_dist(
+                moods_map.get(track_id), moods_map.get(other_id)
+            )
+            tag_d = _cosine_dist(
+                moodtags.get(track_id), moodtags.get(other_id)  # type: ignore[arg-type]
+            )
+            mood_ds = [d for d in (mood_d, tag_d) if d is not None]
+            if mood_ds:
+                per_group["moods"] = float(np.mean(mood_ds))
             for g, vecs in (
                 ("instruments", instruments),
                 ("genre", genres),
                 ("topics", topics),
             ):
-                d = _cosine_dist(vecs.get(track_id), vecs.get(other_id))  # type: ignore[arg-type]
+                d = _cosine_dist(vecs.get(track_id), vecs.get(other_id))
                 if d is not None:
                     per_group[g] = d
             d = _tfidf_dist(tfidf, track_id, other_id)
             if d is not None:
                 per_group["lyrics"] = d
+            # бонус за совпадение тональности (обе уверенны в ней)
+            key_a = keys_map.get(track_id)
+            key_b = keys_map.get(other_id)
+            if (
+                key_a
+                and key_b
+                and key_a[0]
+                and key_a[0] == key_b[0]
+                and key_a[1] >= KEY_CONF_GATE
+                and key_b[1] >= KEY_CONF_GATE
+                and "harmony" in per_group
+            ):
+                per_group["harmony"] = max(
+                    0.0, per_group["harmony"] - KEY_BONUS
+                )
             if not per_group:
                 return None, ""
             w_sum = sum(weights[g] for g in per_group)
             total = sum(weights[g] * per_group[g] for g in per_group) / w_sum
-            closest = min(per_group, key=per_group.get)
+            closest = min(per_group, key=lambda g: per_group[g])
             return total, closest
 
         scored: list[tuple[float, AudioFeatures, str]] = []

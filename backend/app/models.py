@@ -38,6 +38,9 @@ class AudioFeatures(SQLModel, table=True):
     mood_sad: float = 0.125
     mood_relaxed: float = 0.125
     mood_aggressive: float = 0.125
+    mood_electronic: float = 0.125
+    mood_acoustic: float = 0.125
+    mood_party: float = 0.125
     mood_epic: float = 0.125
     mood_dark: float = 0.125
     mood_romantic: float = 0.125
@@ -54,6 +57,7 @@ class AudioFeatures(SQLModel, table=True):
     # фичи v3 (Essentia): теги json и доля вокала
     tags: str = ""
     vocal_ratio: float | None = None
+    embedding: str = ""
     feat_version: int = 0
     analyzed_at: datetime = Field(default_factory=datetime.utcnow)
 

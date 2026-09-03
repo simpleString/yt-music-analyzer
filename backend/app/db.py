@@ -41,6 +41,22 @@ def init_db() -> None:
                 "ALTER TABLE audio_features ADD COLUMN mood_atmospheric "
                 "FLOAT NOT NULL DEFAULT 0.125"
             ),
+            "mood_electronic": (
+                "ALTER TABLE audio_features ADD COLUMN mood_electronic "
+                "FLOAT NOT NULL DEFAULT 0.125"
+            ),
+            "mood_acoustic": (
+                "ALTER TABLE audio_features ADD COLUMN mood_acoustic "
+                "FLOAT NOT NULL DEFAULT 0.125"
+            ),
+            "mood_party": (
+                "ALTER TABLE audio_features ADD COLUMN mood_party "
+                "FLOAT NOT NULL DEFAULT 0.125"
+            ),
+            "embedding": (
+                "ALTER TABLE audio_features ADD COLUMN embedding "
+                "VARCHAR NOT NULL DEFAULT ''"
+            ),
             "feat_version": (
                 "ALTER TABLE audio_features ADD COLUMN feat_version "
                 "INTEGER NOT NULL DEFAULT 0"

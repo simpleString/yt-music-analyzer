@@ -51,7 +51,6 @@ def parse_watch_history(data: list[dict], tz_name: str) -> list[RawListen]:
             )
         )
 
-    print(entries)
     return entries
 
 

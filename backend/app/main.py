@@ -3,6 +3,7 @@ import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -125,7 +126,9 @@ def api_state() -> dict:
 
 @app.post("/api/import")
 async def api_import(
-    file: UploadFile | None = File(None), path: str = Form("")
+    file: UploadFile | None = File(None),
+    path: str = Form(""),
+    tz: str = Form(""),
 ) -> dict:
     target = ""
     if file is not None and file.filename:
@@ -147,7 +150,12 @@ async def api_import(
             "Не удалось разобрать JSON. Нужен файл «История просмотров "
             "YouTube» из Google Takeout.",
         )
-    _spawn("import", lambda stop: run_import(target, stop))
+    try:
+        ZoneInfo(tz.strip())
+        tz_name = tz.strip()
+    except Exception:
+        tz_name = ""
+    _spawn("import", lambda stop: run_import(target, stop, tz_name))
     return {"ok": True}
 
 
@@ -689,6 +697,192 @@ def api_recommendations_essentia(
                 }
             )
         return {"similar": result, "total": total}
+
+
+
+
+SETTINGS_FIELDS: list[dict] = [
+    {
+        "key": "youtube_api_key",
+        "type": "str",
+        "label": "YouTube API-ключ",
+        "hint": "Ключ YouTube Data API v3: фильтр музыки определяет категорию и длительность видео.",
+    },
+    {
+        "key": "timezone",
+        "type": "str",
+        "label": "Часовой пояс по умолчанию",
+        "hint": "IANA-имя (например Europe/Moscow). Применяется при импорте, если браузер не передал свой.",
+    },
+    {
+        "key": "min_play_count",
+        "type": "int",
+        "label": "Минимум прослушиваний для анализа",
+        "hint": "Треки с меньшим числом прослушиваний пропускаются на этапах аудио-анализа и текстов.",
+    },
+    {
+        "key": "audio_analysis_limit",
+        "type": "int",
+        "label": "Лимит аудио-анализа за запуск",
+        "hint": "Сколько треков анализировать за один запуск (0 — все подходящие).",
+    },
+    {
+        "key": "analyze_full_max",
+        "type": "int",
+        "label": "Полный анализ до (секунд)",
+        "hint": "Треки длиннее анализируются по превью-фрагменту.",
+    },
+    {
+        "key": "audio_workers",
+        "type": "int",
+        "label": "Потоков скачивания",
+        "hint": "Параллельных загрузок аудио (узкое место — сеть).",
+    },
+    {
+        "key": "audio_workers_cached",
+        "type": "int",
+        "label": "Потоков анализа из кэша",
+        "hint": "Параллельный анализ, когда аудио уже скачано (узкое место — CPU).",
+    },
+    {
+        "key": "audio_delete_after",
+        "type": "bool",
+        "label": "Удалять аудио после анализа",
+        "hint": "Экономит место, но повторный анализ потребует скачивания заново.",
+    },
+    {
+        "key": "cluster_k",
+        "type": "int",
+        "label": "Число кластеров (K)",
+        "hint": "0 — подобрать автоматически.",
+    },
+    {
+        "key": "lyrics_limit",
+        "type": "int",
+        "label": "Лимит поиска текстов за запуск",
+        "hint": "Сколько треков проверять за один запуск.",
+    },
+    {
+        "key": "lyrics_min_vocal",
+        "type": "float",
+        "label": "Порог вокала для текстов",
+        "hint": "Доля вокала, ниже которой тексты не ищутся (инструменталы).",
+    },
+    {
+        "key": "audio_cookies_from_browser",
+        "type": "str",
+        "label": "Браузер для cookies",
+        "hint": "yt-dlp берёт cookies из этого браузера (пусто — не использовать).",
+    },
+    {
+        "key": "audio_cookies_keyring",
+        "type": "str",
+        "label": "Хранилище паролей",
+        "hint": "Кейринг для расшифровки cookies (basictext, gnomelib…).",
+    },
+    {
+        "key": "mb_enabled",
+        "type": "bool",
+        "label": "MusicBrainz в рекомендациях",
+        "hint": "Подтягивать теги артистов из MusicBrainz.",
+    },
+]
+
+
+def _coerce_setting(field: dict, value) -> object:
+    kind = field["type"]
+    try:
+        if kind == "bool":
+            coerced = (
+                value
+                if isinstance(value, bool)
+                else str(value).strip().lower()
+                in ("1", "true", "yes", "on", "да")
+            )
+        elif kind == "int":
+            coerced = int(value)
+        elif kind == "float":
+            coerced = float(value)
+        else:
+            coerced = str(value).strip()
+    except (TypeError, ValueError):
+        raise HTTPException(422, f"Неверное значение для «{field['label']}»")
+    if field["key"] == "timezone":
+        try:
+            ZoneInfo(coerced)
+        except Exception:
+            raise HTTPException(
+                422,
+                "Часовой пояс должен быть IANA-именем, например Europe/Moscow",
+            )
+    if field["key"] == "min_play_count" and coerced < 1:
+        raise HTTPException(422, "Минимум прослушиваний — не меньше 1")
+    return coerced
+
+
+def _env_repr(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _update_env_file(updates: dict[str, str]) -> None:
+    """Правит существующие ключи .env на месте (без учёта регистра),
+    выкидывает дубликаты обновлённых ключей, новые дописывает в конец."""
+    env_path = Path(".env")
+    lines = (
+        env_path.read_text(encoding="utf-8").splitlines()
+        if env_path.exists()
+        else []
+    )
+    lowered = {k.lower() for k in updates}
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            out.append(line)
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        kl = key.lower()
+        if kl not in lowered:
+            out.append(line)
+            continue
+        if kl in seen:
+            continue
+        seen.add(kl)
+        val = next(v for k, v in updates.items() if k.lower() == kl)
+        out.append(f"{key}={val}")
+    for key, val in updates.items():
+        if key.lower() not in seen:
+            out.append(f"{key}={val}")
+    env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+@app.get("/api/settings")
+def api_settings() -> dict:
+    return {
+        "fields": [
+            {**f, "value": getattr(settings, f["key"])}
+            for f in SETTINGS_FIELDS
+        ]
+    }
+
+
+@app.post("/api/settings")
+def api_save_settings(values: dict = Body(...)) -> dict:
+    by_key = {f["key"]: f for f in SETTINGS_FIELDS}
+    updates: dict[str, str] = {}
+    for key, value in values.items():
+        field = by_key.get(key)
+        if field is None:
+            raise HTTPException(422, f"Неизвестный параметр: {key}")
+        coerced = _coerce_setting(field, value)
+        setattr(settings, field["key"], coerced)
+        updates[key] = _env_repr(coerced)
+    if updates:
+        _update_env_file(updates)
+    return {"ok": True, "saved": sorted(updates)}
 
 
 if DIST_DIR.is_dir():

@@ -8,6 +8,7 @@ from concurrent.futures import (
     ThreadPoolExecutor,
     wait,
 )
+from datetime import date, timedelta
 from pathlib import Path
 
 import httpx
@@ -19,7 +20,7 @@ from sqlmodel import Session, select
 
 from app.config import settings
 from app.db import engine
-from app.models import AudioFeatures, Track
+from app.models import AppMeta, AudioFeatures, Track
 from app.services import jobs
 from app.services import essentia_feats, essentia_tags
 
@@ -33,6 +34,11 @@ MAX_WORKERS = 4
 MAX_CACHED_WORKERS = 16
 RETRY_SLEEPS = (5.0, 15.0, 30.0)
 ABORT_NET_ERRORS = 10
+BOT_BACKOFF_AFTER = 3      # бот-проверок подряд до начала пауз загрузок
+BOT_PAUSE_STEP = 30.0      # первая пауза и шаг эскалации, сек
+BOT_PAUSE_MAX = 600.0      # потолок паузы
+BOT_ABORT_CONSEC = 12      # серия даже с паузами — стоп джобы
+COOKIE_MAX_AGE = 6 * 3600  # перекачивать cookies.txt старше
 POT_URL = "http://127.0.0.1:4416/ping"
 POT_SERVER_JS = settings.data_dir / "tools" / "bgutil-pot-server" / "build" / "main.js"
 
@@ -97,6 +103,108 @@ def _find_cached(video_id: str) -> Path | None:
     return None
 
 
+UNAVAILABLE_KEY = "audio_unavailable"
+UNAVAILABLE_TTL = 30  # дней до повторной попытки
+
+_cookiefile: Path | None = None
+_cookiefile_lock = threading.Lock()
+
+_bot_lock = threading.Lock()
+_bot_pause_until = 0.0
+
+
+def _bot_escalate(consec: int) -> float:
+    """Пауза загрузок после серии бот-проверок (экспоненциальная)."""
+    global _bot_pause_until
+    pause = min(
+        BOT_PAUSE_STEP * 2 ** max(0, consec - BOT_BACKOFF_AFTER),
+        BOT_PAUSE_MAX,
+    )
+    with _bot_lock:
+        _bot_pause_until = max(_bot_pause_until, time.monotonic() + pause)
+    return pause
+
+
+def _bot_pause_remain() -> float:
+    with _bot_lock:
+        return max(0.0, _bot_pause_until - time.monotonic())
+
+
+def _bot_wait(stop: threading.Event, abort: threading.Event) -> None:
+    """Воркер скачивания ждёт окончания паузы (бот-троттлинг)."""
+    while not stop.is_set() and not abort.is_set():
+        remain = _bot_pause_remain()
+        if remain <= 0:
+            return
+        time.sleep(min(remain, 2.0))
+
+
+def _prepare_cookies() -> str:
+    global _cookiefile
+    if not settings.audio_cookies_from_browser:
+        return ""
+    with _cookiefile_lock:
+        path = settings.data_dir / "cookies.txt"
+        had = _cookiefile is not None and path.exists()
+        if had and time.time() - path.stat().st_mtime < COOKIE_MAX_AGE:
+            return ""
+        try:
+            jar = yt_dlp.cookies.extract_cookies_from_browser(
+                settings.audio_cookies_from_browser,
+                keyring=settings.audio_cookies_keyring or None,
+            )
+            jar.save(str(path), ignore_discard=True, ignore_expires=True)
+            _cookiefile = path
+            return "cookies обновлены" if had else "cookies кэшированы"
+        except Exception as exc:  # noqa: BLE001
+            # старый файл лучше никакого: при неудаче оставляем как есть
+            if not had:
+                _cookiefile = None
+            return f"cookies не удалось ({str(exc)[:60]})"
+
+
+def _load_unavailable() -> dict[str, str]:
+    with Session(engine) as session:
+        row = session.get(AppMeta, UNAVAILABLE_KEY)
+    try:
+        data = json.loads(row.value) if row else {}
+    except Exception:  # noqa: BLE001
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_unavailable(data: dict[str, str]) -> None:
+    with Session(engine) as session:
+        row = session.get(AppMeta, UNAVAILABLE_KEY)
+        if row is None:
+            row = AppMeta(key=UNAVAILABLE_KEY, value=json.dumps(data))
+        else:
+            row.value = json.dumps(data)
+        session.add(row)
+        session.commit()
+
+
+def _is_unavailable(unav: dict[str, str], vid: str) -> bool:
+    stamp = unav.get(vid)
+    if not stamp:
+        return False
+    try:
+        return date.fromisoformat(stamp) > date.today() - timedelta(
+            days=UNAVAILABLE_TTL
+        )
+    except ValueError:
+        return False
+
+
+def _classify_dl_error(err: str) -> str:
+    low = err.lower()
+    if "video unavailable" in low or "this video is not available" in low:
+        return "dead"
+    if "sign in to confirm" in low or "not a bot" in low:
+        return "bot"
+    return "other"
+
+
 def download_audio(video_id: str) -> tuple[Path | None, str]:
     settings.audio_dir.mkdir(parents=True, exist_ok=True)
     cached = _find_cached(video_id)
@@ -120,7 +228,9 @@ def download_audio(video_id: str) -> tuple[Path | None, str]:
             }
         },
     }
-    if settings.audio_cookies_from_browser:
+    if _cookiefile is not None and _cookiefile.exists():
+        opts["cookiefile"] = str(_cookiefile)
+    elif settings.audio_cookies_from_browser:
         opts["cookiesfrombrowser"] = (
             settings.audio_cookies_from_browser,
             None,
@@ -367,6 +477,9 @@ def _download_and_analyze(
     """
     if abort.is_set() or stop.is_set():
         return "skipped", None, ""
+    _bot_wait(stop, abort)
+    if abort.is_set() or stop.is_set():
+        return "skipped", None, ""
     path, dl_error = download_audio_retried(video_id, stop)
     if path is None:
         if stop.is_set():
@@ -447,6 +560,9 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
             1, min(settings.audio_workers_cached, MAX_CACHED_WORKERS)
         )
         pot_note = ensure_pot_server()
+        cookie_note = _prepare_cookies()
+        if cookie_note:
+            pot_note = f"{pot_note}; {cookie_note}"
         jobs.progress("audio", 0, 0, f"{pot_note}; проверка моделей Essentia…")
         essentia_tags.ensure_models(
             progress_cb=lambda m: jobs.progress(
@@ -466,7 +582,10 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
         with Session(engine) as session:
             stmt = (
                 select(Track)
-                .where(Track.is_music == True)  # noqa: E712
+                .where(
+                    Track.is_music == True,  # noqa: E712
+                    Track.play_count >= settings.min_play_count,
+                )
                 .order_by(Track.play_count.desc())
             )
             tracks = session.exec(stmt).all()
@@ -485,6 +604,20 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
             if limit > 0:
                 candidates = candidates[:limit]
 
+        unav = _load_unavailable()
+        dead_known = {
+            vid for vid, _ in candidates if _is_unavailable(unav, vid)
+        }
+        if dead_known:
+            candidates = [
+                (v, t) for v, t in candidates if v not in dead_known
+            ]
+        dead_note = (
+            f" (в списке недоступных: {len(dead_known)})"
+            if dead_known
+            else ""
+        )
+
         total = len(candidates)
         n_cached = sum(1 for vid, _ in candidates if _find_cached(vid) is not None)
         # живые остатки: уменьшаются по мере обработки
@@ -502,15 +635,18 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
             total,
             f"{pot_note}; воркеров: анализ {cached_workers} / скачивание "
             f"{workers}; {counts_prefix()}к анализу: {total} "
-            f"(уже проанализировано: {already})"
+            f"(уже проанализировано: {already}){dead_note}"
             if total
             else f"{pot_note}; нет треков для анализа",
         )
 
         ok = failed = skipped = 0
+        n_dead = n_bot = n_other = 0
         last_error = ""
         consecutive_net = 0
+        consecutive_bot = 0
         aborted = False
+        aborted_bot = False
         abort = threading.Event()
         dl_sem = threading.Semaphore(workers)
 
@@ -543,11 +679,17 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
                     )
                     if not completed:
                         # heartbeat: треки ещё считаются, джоба жива
+                        bp = _bot_pause_remain()
+                        extra = (
+                            f"; пауза загрузок {int(bp)}с (бот-проверки)"
+                            if bp > 0
+                            else ""
+                        )
                         jobs.progress(
                             "audio",
                             done_count,
                             total,
-                            f"{counts_prefix()}{last_note} "
+                            f"{counts_prefix()}{last_note}{extra} "
                             f"(в полёте: {len(pending)})",
                         )
                         continue
@@ -569,6 +711,7 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
                         note = ""
                         if status == "ok":
                             consecutive_net = 0
+                            consecutive_bot = 0
                             _save_features(vid, feats)
                             ok += 1
                             note = (
@@ -592,6 +735,28 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
                         elif status == "dl-error":
                             failed += 1
                             last_error = err
+                            kind = _classify_dl_error(err)
+                            note = None
+                            if kind == "dead":
+                                n_dead += 1
+                                unav[vid] = date.today().isoformat()
+                            elif kind == "bot":
+                                n_bot += 1
+                                consecutive_bot += 1
+                                if abort.is_set():
+                                    pause = _bot_pause_remain()
+                                else:
+                                    pause = _bot_escalate(consecutive_bot)
+                                    if consecutive_bot >= BOT_ABORT_CONSEC:
+                                        abort.set()
+                                        aborted_bot = True
+                                note = (
+                                    f"{ok} готово, {failed} ошибок; последний: "
+                                    f"{title[:40]} — бот-проверка, пауза "
+                                    f"загрузок {int(pause)}с"
+                                )
+                            else:
+                                n_other += 1
                             if _is_network_error(err):
                                 consecutive_net += 1
                                 if (
@@ -600,10 +765,11 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
                                 ):
                                     abort.set()
                                     aborted = True
-                            note = (
-                                f"{ok} готово, {failed} ошибок; последний: "
-                                f"{title[:40]} — {err[:80]}"
-                            )
+                            if note is None:
+                                note = (
+                                    f"{ok} готово, {failed} ошибок; последний: "
+                                    f"{title[:40]} — {err[:80]}"
+                                )
                         else:
                             failed += 1
                             last_error = err or "ошибка анализа"
@@ -619,10 +785,26 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
                             "audio", done_count, total, counts_prefix() + note
                         )
 
+        if n_dead:
+            _save_unavailable(unav)
+        parts = []
+        if n_dead:
+            parts.append(
+                f"недоступны (удалены/гео): {n_dead} — помечены, "
+                f"повтор через {UNAVAILABLE_TTL} дн."
+            )
+        if n_bot:
+            parts.append(
+                f"бот-проверка: {n_bot} — проверьте VPN/cookies"
+            )
+        if n_other:
+            parts.append(f"прочие ошибки: {n_other}")
         detail = (
             f"проанализировано {ok}, ошибок {failed}, пропущено {skipped} "
             f"(всего в БД: {already + ok}; воркеров: {workers})"
         )
+        if parts:
+            detail += "; " + "; ".join(parts)
         if jobs.should_stop("audio", stop):
             jobs.stop_job("audio", detail=f"{detail}; остановлено пользователем")
             return
@@ -630,6 +812,12 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
             detail += (
                 f"; остановлено: {ABORT_NET_ERRORS} сетевых ошибок подряд — "
                 "YouTube троттлит IP, повторите запуск позже"
+            )
+        if aborted_bot:
+            detail += (
+                f"; остановлено: {BOT_ABORT_CONSEC} бот-проверок подряд даже "
+                "после пауз — YouTube ограничил IP/сессию; подождите 30–60 "
+                "мин, смените VPN-выход или обновите cookies"
             )
         if last_error:
             detail += f"; последняя ошибка: {last_error[:150]}"

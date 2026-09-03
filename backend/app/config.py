@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
     frontend_dist: Path = _REPO_ROOT / "frontend" / "dist"
     audio_analysis_limit: int = 5
+    # порог прослушиваний: треки с меньшим числом прослушиваний
+    # пропускаются на этапах аудио-анализа и поиска текстов
+    min_play_count: int = 2
     analyze_full_max: int = 300
     audio_workers: int = 2
     # параллельных потоков анализа, когда аудио уже в кэше (сеть не нужна);

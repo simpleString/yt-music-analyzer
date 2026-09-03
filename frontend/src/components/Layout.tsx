@@ -6,8 +6,8 @@ import { useStateQuery } from "@/lib/api"
 const NAV = [
   { to: "/", label: "Главная", end: true },
   { to: "/dashboard", label: "Дашборд" },
-  { to: "/moods", label: "Настроения" },
   { to: "/import", label: "Импорт" },
+  { to: "/settings", label: "Настройки" },
 ]
 
 export function Layout() {

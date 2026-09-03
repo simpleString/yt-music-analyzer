@@ -14,13 +14,17 @@ from app.services.artists import normalize_artist
 BATCH = 500
 
 
-def run_import(filepath: str, stop: threading.Event | None = None) -> None:
+def run_import(
+    filepath: str,
+    stop: threading.Event | None = None,
+    tz_name: str = "",
+) -> None:
     try:
         if not jobs.start_job("import"):
             return
         stop = stop if stop is not None else threading.Event()
         data = load_history_file(filepath)
-        entries = parse_watch_history(data, settings.timezone)
+        entries = parse_watch_history(data, tz_name or settings.timezone)
 
         seen: set[tuple[str, int]] = set()
         unique: list[RawListen] = []

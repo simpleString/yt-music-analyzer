@@ -215,7 +215,10 @@ def run_lyrics(stop: threading.Event | None = None) -> None:
             stmt = (
                 select(Track, AudioFeatures)
                 .join(AudioFeatures, AudioFeatures.track_id == Track.video_id)
-                .where(Track.is_music == True)  # noqa: E712
+                .where(
+                    Track.is_music == True,  # noqa: E712
+                    Track.play_count >= settings.min_play_count,
+                )
                 .order_by(Track.play_count.desc())
             )
             candidates = [

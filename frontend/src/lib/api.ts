@@ -212,16 +212,6 @@ export interface TrackInfo {
   play_count: number
 }
 
-export interface MoodCard {
-  cluster: ClusterInfo
-  tracks: TrackInfo[]
-}
-
-export interface MoodsData {
-  analyzed: number
-  cards: MoodCard[]
-}
-
 export interface MbArtist {
   name: string
   country: string
@@ -268,6 +258,16 @@ export interface EssentiaSimilarTrack {
   match: string
 }
 
+export interface SettingsField {
+  key: string
+  type: "str" | "int" | "float" | "bool"
+  label: string
+  hint: string
+  value: string | number | boolean
+}
+
+export type SettingsValues = Record<string, string | number | boolean>
+
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url)
   if (!res.ok) {
@@ -305,6 +305,14 @@ export function useStateQuery() {
         ? 1000
         : 5000,
   })
+}
+
+export const browserTimezone = (): string => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || ""
+  } catch {
+    return ""
+  }
 }
 
 export const api = {
@@ -347,7 +355,6 @@ export const api = {
     if (to) sp.set("date_to", to)
     return getJson<DashboardData>(`/api/dashboard?${sp}`)
   },
-  moods: () => getJson<MoodsData>("/api/moods"),
   recommendations: (trackId: string) =>
     getJson<RecommendationsData>(
       `/api/recommendations${trackId ? `?track_id=${encodeURIComponent(trackId)}` : ""}`
@@ -363,11 +370,13 @@ export const api = {
   importFile: (file: File) => {
     const form = new FormData()
     form.append("file", file)
+    form.append("tz", browserTimezone())
     return postForm("/api/import", form)
   },
   importPath: (path: string) => {
     const form = new FormData()
     form.append("path", path)
+    form.append("tz", browserTimezone())
     return postForm("/api/import", form)
   },
   runFilter: () => postForm("/api/pipeline/filter", new FormData()),
@@ -382,4 +391,7 @@ export const api = {
     getJson<{ track_id: string; text: string; synced: boolean; language: string; sentiment: number }>(
       `/api/tracks/${encodeURIComponent(videoId)}/lyrics`
     ),
+  settings: () => getJson<{ fields: SettingsField[] }>("/api/settings"),
+  saveSettings: (values: SettingsValues) =>
+    postJson("/api/settings", values),
 }

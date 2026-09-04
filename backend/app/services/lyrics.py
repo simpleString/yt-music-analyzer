@@ -25,14 +25,14 @@ TITLE_JUNK_RE = re.compile(
     r"|[^)\]]*20\d{2}[^)\]]*)[^)\]]*[)\]]",
     re.I,
 )
-# «| Live From ...» — хвост после вертикальной черты с концертными маркерами
+# "| Live From ..." — tail after a vertical bar with live markers
 PIPE_TAIL_RE = re.compile(
     r"\s*[\|/]\s*(live|session|studio|from|official|version|edit|remix).*$", re.I
 )
-# ведущий номер трека: «23. », «6. », «07 - », «Track 3»
+# leading track number: "23. ", "6. ", "07 - ", "Track 3"
 TRACK_NUM_RE = re.compile(r"^\s*(track\s*)?\d{1,2}[\s.\-_]+\s*", re.I)
-# аниме/фандом-скобки: 【...】〖...〗｢...｣ и хвост после « × » (с пробелами,
-# чтобы не рубить слова с латинской x вроде «Oxxxymiron»)
+# anime/fandom brackets: 【...】〖...〗｢...｣ and the tail after " × " (with spaces,
+# so words with a latin x like "Oxxxymiron" are not cut)
 CJK_BRACKETS_RE = re.compile(
     r"[【〖｢\[][^】〗｣\]]{0,50}[】〗｣\]]|\s+[×x]\s+.*$"
 )
@@ -71,11 +71,11 @@ def _clean_title(title: str) -> tuple[str, str]:
     if " - " in t:
         parts = t.split(" - ", 1)
         artist, song = parts[0].strip(), parts[1].strip()
-    # feat-хвосты и ведущие номера — уже после разделения на артиста/песню
+    # feat tails and leading numbers — after the artist/song split
     song = FEAT_RE.sub("", song).strip()
     song = TRACK_NUM_RE.sub("", song).strip()
     artist = FEAT_RE.sub("", artist).strip()
-    # «Кожура/Я всё решу» — двойное название, берём первую часть
+    # "Кожура/Я всё решу" — double title, take the first part
     if "/" in song and len(song.split("/")) == 2:
         first = song.split("/", 1)[0].strip()
         if 3 <= len(first) <= 60:
@@ -160,10 +160,10 @@ def _fetch_lyrics(track: Track, client: httpx.Client) -> Lyrics | None:
         return None
     hits = _lrclib_search(song, artist, client)
     if not hits and artist and artist != artist_guess and artist_guess:
-        # канал мог быть неточным (лейбл, лайв-канал) — пробуем артиста из названия
+        # the channel may be inaccurate (label, live channel) — try the artist from the title
         hits = _lrclib_search(song, artist_guess, client)
     if not hits:
-        # последний шанс: только по названию песни
+        # last resort: search by song title only
         _throttle()
         try:
             resp = client.get(LRCLIB_SEARCH, params={"track_name": song[:120]})
@@ -179,7 +179,7 @@ def _fetch_lyrics(track: Track, client: httpx.Client) -> Lyrics | None:
         if ratio > best_ratio:
             best, best_ratio = hit, ratio
     if best is None or best_ratio < MIN_MATCH_RATIO:
-        # без артиста в таргете — совпадение только названия
+        # no artist in the target — title-only match
         target_song = _norm(song)
         for hit in hits[:8]:
             candidate = _norm(hit.get("trackName", ""))
@@ -230,9 +230,9 @@ def run_lyrics(stop: threading.Event | None = None) -> None:
 
         total = len(candidates)
         jobs.progress(
-            "lyrics", 0, total, f"к поиску: {total} (лимит {settings.lyrics_limit})"
+            "lyrics", 0, total, f"to search: {total} (limit {settings.lyrics_limit})"
             if total
-            else "нет треков для поиска текстов",
+            else "no tracks to search lyrics for",
         )
 
         found = 0
@@ -254,17 +254,17 @@ def run_lyrics(stop: threading.Event | None = None) -> None:
                         "lyrics",
                         i + 1,
                         total,
-                        f"найдено {found} из {i + 1}; последний: {track.title[:45]}",
+                        f"found {found} of {i + 1}; last: {track.title[:45]}",
                     )
 
         if jobs.should_stop("lyrics", stop):
             jobs.stop_job(
-                "lyrics", detail=f"остановлено; найдено {found} текстов"
+                "lyrics", detail=f"stopped; found {found} lyrics"
             )
             return
         jobs.finish_job(
             "lyrics",
-            detail=f"найдено {found} текстов из {total} проверенных",
+            detail=f"found {found} lyrics out of {total} checked",
         )
     except Exception as exc:  # noqa: BLE001
         jobs.fail_job("lyrics", f"{type(exc).__name__}: {exc}")

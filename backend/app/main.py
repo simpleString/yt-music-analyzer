@@ -47,8 +47,8 @@ async def lifespan(app: FastAPI):
     init_db()
     jobs_svc.cancel_orphans()
     yield
-    # при остановке сервера (Ctrl+C/reload) просим фоновые задания
-    # завершиться — иначе не-daemon потоки дорабатывают всю очередь
+    # on server shutdown (Ctrl+C/reload) ask background jobs
+    # to finish — otherwise non-daemon threads keep working through the queue
     for kind in jobs_svc.KINDS:
         jobs_svc.request_cancel(kind)
 
@@ -140,15 +140,15 @@ async def api_import(
     if not target or not Path(target).exists():
         raise HTTPException(
             400,
-            "Файл не найден. Загрузите JSON истории или укажите корректный путь.",
+            "File not found. Upload a history JSON or provide a valid path.",
         )
     try:
         load_history_file(target)
     except Exception:
         raise HTTPException(
             400,
-            "Не удалось разобрать JSON. Нужен файл «История просмотров "
-            "YouTube» из Google Takeout.",
+            "Failed to parse JSON. Expected a “YouTube watch history” "
+            "file from Google Takeout.",
         )
     try:
         ZoneInfo(tz.strip())
@@ -349,7 +349,7 @@ def api_track_detail(video_id: str) -> dict:
     with Session(engine) as session:
         track = session.get(Track, video_id)
         if track is None:
-            raise HTTPException(404, "Трек не найден")
+            raise HTTPException(404, "Track not found")
         fl = session.exec(
             select(func.min(Listen.listened_at), func.max(Listen.listened_at)).where(
                 Listen.track_id == video_id
@@ -436,7 +436,7 @@ def api_classify_track(video_id: str, is_music: bool = Body(..., embed=True)) ->
     with Session(engine) as session:
         track = session.get(Track, video_id)
         if track is None:
-            raise HTTPException(404, "Трек не найден")
+            raise HTTPException(404, "Track not found")
         track.is_music = is_music
         track.music_reason = "manual"
         session.add(track)
@@ -448,7 +448,7 @@ def api_classify_track(video_id: str, is_music: bool = Body(..., embed=True)) ->
 def api_hide_channel(channel: str = Body(..., embed=True)) -> dict:
     channel = channel.strip()
     if not channel:
-        raise HTTPException(400, "Пустое имя канала")
+        raise HTTPException(400, "Empty channel name")
     with Session(engine) as session:
         tracks = session.exec(
             select(Track).where(
@@ -464,40 +464,40 @@ def api_hide_channel(channel: str = Body(..., embed=True)) -> dict:
 
 
 GENRE_RU = {
-    "Blues": "блюз", "Classical": "классика", "Electronic": "электроника",
-    "Folk, World, & Country": "фолк", "Funk / Soul": "фанк/соул",
-    "Hip Hop": "хип-хоп", "Jazz": "джаз", "Latin": "латина",
-    "Non-Music": "не музыка", "Pop": "поп", "Reggae": "регги",
-    "Rock": "рок", "Stage & Screen": "саундтрек",
-    "Ambient": "эмбиент", "House": "хаус", "Techno": "техно",
-    "Trance": "транс", "Drum n Bass": "dnb", "Breakbeat": "брейкс",
-    "Dubstep": "дабстеп", "Synth-pop": "синти-поп", "Electro": "электро",
-    "Deep House": "ди-хаус", "Tech House": "тех-хаус", "Electro House": "электро-хаус",
-    "Experimental": "эксперимент.", "New Age": "нью-эйдж", "Downtempo": "даунтемпо",
-    "IDM": "idm", "Industrial": "индастриал", "Indie Rock": "инди-рок",
-    "Alternative Rock": "альт. рок", "Punk": "панк", "Metal": "метал",
-    "Heavy Metal": "метал", "Death Metal": "дэт-метал", "Black Metal": "блэк-метал",
-    "Hard Rock": "хард-рок", "Prog. Rock": "прог-рок", "Psychedelic Rock": "психоделик",
-    "Hip-Hop": "хип-хоп", "Trap": "трэп", "Boom Bap": "бум-бэп",
-    "R&B": "r&b", "Soul": "соул", "Funk": "фанк", "Disco": "диско",
-    "Ballad": "баллада", "Beatdown": "битдаун", "Hardcore": "хардкор",
-    "Hard Techno": "хард-техно", "Bassline": "басслайн", "Club": "клубная",
-    "Dance": "танцевальная", "Eurodance": "евродэнс", "Chillwave": "чайллвейв",
-    "Vaporwave": "вейпорвейв", "Lo-Fi": "лоу-фай", "Noise": "нойз",
-    "Soundtrack": "саундтрек", "Score": "муз. к кино", "Theme": "тема",
-    "Musical": "мюзикл", "Bossa Nova": "босса-нова", "Jazz-Funk": "джаз-фанк",
-    "Swing": "свинг", "Bluegrass": "блюграсс", "Country": "кантри",
-    "Ska": "ска", "Reggaeton": "реггетон", "Dub": "даб",
-    "Modern Classical": "совр. классика", "Neo-Classical": "неоклассика",
-    "Leftfield": "лефтфилд", "Glitch": "глитч", "Footwork": "футворк",
-    "Garage House": "гараж-хаус", "UK Garage": "ю-кей гараж",
-    "Future Jazz": "фьюче-джаз", "Nu Jazz": "ну-джаз", "Tribal": "трайбл",
+    "Blues": "blues", "Classical": "classical", "Electronic": "electronic",
+    "Folk, World, & Country": "folk", "Funk / Soul": "funk/soul",
+    "Hip Hop": "hip-hop", "Jazz": "jazz", "Latin": "latin",
+    "Non-Music": "non-music", "Pop": "pop", "Reggae": "reggae",
+    "Rock": "rock", "Stage & Screen": "soundtrack",
+    "Ambient": "ambient", "House": "house", "Techno": "techno",
+    "Trance": "trance", "Drum n Bass": "dnb", "Breakbeat": "breakbeat",
+    "Dubstep": "dubstep", "Synth-pop": "synth-pop", "Electro": "electro",
+    "Deep House": "deep house", "Tech House": "tech house", "Electro House": "electro house",
+    "Experimental": "experimental", "New Age": "new age", "Downtempo": "downtempo",
+    "IDM": "idm", "Industrial": "industrial", "Indie Rock": "indie rock",
+    "Alternative Rock": "alt. rock", "Punk": "punk", "Metal": "metal",
+    "Heavy Metal": "metal", "Death Metal": "death metal", "Black Metal": "black metal",
+    "Hard Rock": "hard rock", "Prog. Rock": "prog rock", "Psychedelic Rock": "psychedelic",
+    "Hip-Hop": "hip-hop", "Trap": "trap", "Boom Bap": "boom bap",
+    "R&B": "r&b", "Soul": "soul", "Funk": "funk", "Disco": "disco",
+    "Ballad": "ballad", "Beatdown": "beatdown", "Hardcore": "hardcore",
+    "Hard Techno": "hard techno", "Bassline": "bassline", "Club": "club",
+    "Dance": "dance", "Eurodance": "eurodance", "Chillwave": "chillwave",
+    "Vaporwave": "vaporwave", "Lo-Fi": "lo-fi", "Noise": "noise",
+    "Soundtrack": "soundtrack", "Score": "film score", "Theme": "theme",
+    "Musical": "musical", "Bossa Nova": "bossa nova", "Jazz-Funk": "jazz-funk",
+    "Swing": "swing", "Bluegrass": "bluegrass", "Country": "country",
+    "Ska": "ska", "Reggaeton": "reggaeton", "Dub": "dub",
+    "Modern Classical": "modern classical", "Neo-Classical": "neo-classical",
+    "Leftfield": "leftfield", "Glitch": "glitch", "Footwork": "footwork",
+    "Garage House": "garage house", "UK Garage": "uk garage",
+    "Future Jazz": "future jazz", "Nu Jazz": "nu jazz", "Tribal": "tribal",
 }
 
 
 @app.get("/api/genres")
 def api_genres() -> list[dict]:
-    """Топ-жанры из фактических тегов в БД (для фильтра на главной)."""
+    """Top genres from the actual tags stored in the DB (for the home filter)."""
     import json as _json
 
     with Session(engine) as session:
@@ -530,7 +530,7 @@ def api_track_lyrics(video_id: str) -> dict:
     with Session(engine) as session:
         row = session.get(Lyrics, video_id)
         if row is None or not row.text:
-            raise HTTPException(404, "Текст не найден")
+            raise HTTPException(404, "Lyrics not found")
         return {
             "track_id": video_id,
             "text": row.text,
@@ -543,10 +543,10 @@ def api_track_lyrics(video_id: str) -> dict:
 @app.post("/api/jobs/{kind}/cancel")
 def api_cancel_job(kind: str) -> dict:
     if kind not in jobs_svc.KINDS:
-        raise HTTPException(404, "Неизвестный тип задания")
+        raise HTTPException(404, "Unknown job type")
     ok = jobs_svc.request_cancel(kind)
     if not ok:
-        raise HTTPException(409, "Задание не выполняется")
+        raise HTTPException(409, "Job is not running")
     return {"ok": True, "kind": kind}
 
 
@@ -557,9 +557,9 @@ def api_dashboard(
     d_from = _parse_date(date_from, "date_from")
     d_to = _parse_date(date_to, "date_to")
     if d_from and d_to and d_from > d_to:
-        raise HTTPException(422, "date_from должен быть раньше date_to")
+        raise HTTPException(422, "date_from must be earlier than date_to")
     if granularity not in ("month", "week"):
-        raise HTTPException(422, "granularity должен быть month или week")
+        raise HTTPException(422, "granularity must be month or week")
     with Session(engine) as session:
         return {
             "totals": stats_svc.totals(session, d_from, d_to),
@@ -581,7 +581,7 @@ def _parse_date(value: str | None, name: str):
     try:
         return datetime.strptime(value, "%Y-%m-%d").date()
     except ValueError:
-        raise HTTPException(422, f"{name} должен быть датой в формате YYYY-MM-DD")
+        raise HTTPException(422, f"{name} must be a date in YYYY-MM-DD format")
 
 
 @app.get("/api/moods")
@@ -705,86 +705,86 @@ SETTINGS_FIELDS: list[dict] = [
     {
         "key": "youtube_api_key",
         "type": "str",
-        "label": "YouTube API-ключ",
-        "hint": "Ключ YouTube Data API v3: фильтр музыки определяет категорию и длительность видео.",
+        "label": "YouTube API key",
+        "hint": "YouTube Data API v3 key: the music filter uses it to detect video category and duration.",
     },
     {
         "key": "timezone",
         "type": "str",
-        "label": "Часовой пояс по умолчанию",
-        "hint": "IANA-имя (например Europe/Moscow). Применяется при импорте, если браузер не передал свой.",
+        "label": "Default timezone",
+        "hint": "IANA name (e.g. Europe/Moscow). Used at import if the browser provides none.",
     },
     {
         "key": "min_play_count",
         "type": "int",
-        "label": "Минимум прослушиваний для анализа",
-        "hint": "Треки с меньшим числом прослушиваний пропускаются на этапах аудио-анализа и текстов.",
+        "label": "Minimum plays for analysis",
+        "hint": "Tracks with fewer plays are skipped by the audio analysis and lyrics stages.",
     },
     {
         "key": "audio_analysis_limit",
         "type": "int",
-        "label": "Лимит аудио-анализа за запуск",
-        "hint": "Сколько треков анализировать за один запуск (0 — все подходящие).",
+        "label": "Audio analysis limit per run",
+        "hint": "How many tracks to analyze per run (0 — all eligible).",
     },
     {
         "key": "analyze_full_max",
         "type": "int",
-        "label": "Полный анализ до (секунд)",
-        "hint": "Треки длиннее анализируются по превью-фрагменту.",
+        "label": "Full analysis up to (seconds)",
+        "hint": "Longer tracks are analyzed using a preview fragment.",
     },
     {
         "key": "audio_workers",
         "type": "int",
-        "label": "Потоков скачивания",
-        "hint": "Параллельных загрузок аудио (узкое место — сеть).",
+        "label": "Download threads",
+        "hint": "Parallel audio downloads (bottleneck: network).",
     },
     {
         "key": "audio_workers_cached",
         "type": "int",
-        "label": "Потоков анализа из кэша",
-        "hint": "Параллельный анализ, когда аудио уже скачано (узкое место — CPU).",
+        "label": "Cached analysis threads",
+        "hint": "Parallel analysis when audio is already downloaded (bottleneck: CPU).",
     },
     {
         "key": "audio_delete_after",
         "type": "bool",
-        "label": "Удалять аудио после анализа",
-        "hint": "Экономит место, но повторный анализ потребует скачивания заново.",
+        "label": "Delete audio after analysis",
+        "hint": "Saves disk space, but re-analysis requires downloading again.",
     },
     {
         "key": "cluster_k",
         "type": "int",
-        "label": "Число кластеров (K)",
-        "hint": "0 — подобрать автоматически.",
+        "label": "Number of clusters (K)",
+        "hint": "0 — pick automatically.",
     },
     {
         "key": "lyrics_limit",
         "type": "int",
-        "label": "Лимит поиска текстов за запуск",
-        "hint": "Сколько треков проверять за один запуск.",
+        "label": "Lyrics lookup limit per run",
+        "hint": "How many tracks to check per run.",
     },
     {
         "key": "lyrics_min_vocal",
         "type": "float",
-        "label": "Порог вокала для текстов",
-        "hint": "Доля вокала, ниже которой тексты не ищутся (инструменталы).",
+        "label": "Vocal threshold for lyrics",
+        "hint": "Vocal ratio below which lyrics are not looked up (instrumentals).",
     },
     {
         "key": "audio_cookies_from_browser",
         "type": "str",
-        "label": "Браузер для cookies",
-        "hint": "yt-dlp берёт cookies из этого браузера (пусто — не использовать).",
+        "label": "Browser for cookies",
+        "hint": "yt-dlp takes cookies from this browser (empty — don't use).",
     },
     {
         "key": "audio_cookies_keyring",
         "type": "str",
-        "label": "Хранилище паролей",
-        "hint": "Кейринг для расшифровки cookies (basictext, gnomelib…).",
+        "label": "Password keyring",
+        "hint": "Keyring used to decrypt cookies (basictext, gnomelib…).",
     },
     {
         "key": "mb_enabled",
         "type": "bool",
-        "label": "MusicBrainz в рекомендациях",
-        "hint": "Подтягивать теги артистов из MusicBrainz.",
+        "label": "MusicBrainz in recommendations",
+        "hint": "Fetch artist tags from MusicBrainz.",
     },
 ]
 
@@ -797,7 +797,7 @@ def _coerce_setting(field: dict, value) -> object:
                 value
                 if isinstance(value, bool)
                 else str(value).strip().lower()
-                in ("1", "true", "yes", "on", "да")
+                in ("1", "true", "yes", "y", "on")
             )
         elif kind == "int":
             coerced = int(value)
@@ -806,17 +806,17 @@ def _coerce_setting(field: dict, value) -> object:
         else:
             coerced = str(value).strip()
     except (TypeError, ValueError):
-        raise HTTPException(422, f"Неверное значение для «{field['label']}»")
+        raise HTTPException(422, f"Invalid value for \"{field['label']}\"")
     if field["key"] == "timezone":
         try:
             ZoneInfo(coerced)
         except Exception:
             raise HTTPException(
                 422,
-                "Часовой пояс должен быть IANA-именем, например Europe/Moscow",
+                "Timezone must be an IANA name, e.g. Europe/Moscow",
             )
     if field["key"] == "min_play_count" and coerced < 1:
-        raise HTTPException(422, "Минимум прослушиваний — не меньше 1")
+        raise HTTPException(422, "Minimum plays must be at least 1")
     return coerced
 
 
@@ -827,8 +827,8 @@ def _env_repr(value: object) -> str:
 
 
 def _update_env_file(updates: dict[str, str]) -> None:
-    """Правит существующие ключи .env на месте (без учёта регистра),
-    выкидывает дубликаты обновлённых ключей, новые дописывает в конец."""
+    """Edits existing .env keys in place (case-insensitive), drops
+    duplicates of updated keys, and appends new ones at the end."""
     env_path = Path(".env")
     lines = (
         env_path.read_text(encoding="utf-8").splitlines()
@@ -876,7 +876,7 @@ def api_save_settings(values: dict = Body(...)) -> dict:
     for key, value in values.items():
         field = by_key.get(key)
         if field is None:
-            raise HTTPException(422, f"Неизвестный параметр: {key}")
+            raise HTTPException(422, f"Unknown setting: {key}")
         coerced = _coerce_setting(field, value)
         setattr(settings, field["key"], coerced)
         updates[key] = _env_repr(coerced)

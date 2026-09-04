@@ -1,15 +1,15 @@
-"""Ритм, тональность и динамика через Essentia (C++ алгоритмы и модели).
+"""Rhythm, key, and dynamics via Essentia (C++ algorithms and models).
 
-- RhythmExtractor2013(method="multifeature") — устойчивый к октавным
-  ошибкам BPM;
-- TensorflowPredictTempoCNN (модель deeptemp) — второй, независимый
-  голос по темпу с собственной уверенностью;
-- KeyExtractor (tuning + HPCP + профили) — тональность;
-- DynamicComplexity — громкость (дБ) и динамический диапазон.
+- RhythmExtractor2013(method="multifeature") — BPM robust to octave
+  errors;
+- TensorflowPredictTempoCNN (deeptemp model) — a second, independent
+  tempo vote with its own confidence;
+- KeyExtractor (tuning + HPCP + profiles) — musical key;
+- DynamicComplexity — loudness (dB) and dynamic range.
 
-Алгоритмы ожидают: rhythm/key/dynamics — моно 44.1 кГц float32,
-TempoCNN — моно 16 кГц float32. Ошибки инференса пробрасываются выше —
-тихих заглушек нет.
+The algorithms expect: rhythm/key/dynamics — mono 44.1 kHz float32,
+TempoCNN — mono 16 kHz float32. Inference errors are propagated up —
+no silent fallbacks.
 """
 
 import os
@@ -19,12 +19,12 @@ import numpy as np
 
 from app.config import settings
 
-# глушим INFO/WARNING-спам TensorFlow про CUDA-перебор (до загрузки TF)
+# silence TensorFlow INFO/WARNING spam about CUDA probing (before TF is loaded)
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 import essentia
 
-# INFO-канал essentia (MusicExtractorSVM, загрузка моделей) — в мусор
+# essentia INFO channel (MusicExtractorSVM, model loading) — discarded
 essentia.log.infoActive = False
 
 MODELS_DIR = settings.data_dir / "models"
@@ -35,7 +35,7 @@ _local = threading.local()
 
 
 def ensure_models(progress_cb=None, should_stop=None) -> None:
-    """Скачивает модель TempoCNN при отсутствии; ошибка — исключение."""
+    """Downloads the TempoCNN model if missing; on failure, raises."""
     if should_stop is not None and should_stop():
         return
     path = MODELS_DIR / f"{TEMPO_CNN_PB}.pb"
@@ -45,12 +45,12 @@ def ensure_models(progress_cb=None, should_stop=None) -> None:
 
     url = f"{TEMPO_ZOO}/{TEMPO_CNN_PB}.pb"
     if progress_cb is not None:
-        progress_cb(f"скачивание модели {TEMPO_CNN_PB}.pb")
+        progress_cb(f"downloading model {TEMPO_CNN_PB}.pb")
     download_model_file(url, path)
 
 
 def _algorithms() -> dict:
-    """Тред-локальные инстансы (инстансы essentia не потокобезопасны)."""
+    """Thread-local instances (essentia instances are not thread-safe)."""
     if getattr(_local, "a", None) is not None:
         return _local.a
     from essentia.standard import (
@@ -73,10 +73,10 @@ def _algorithms() -> dict:
 
 
 def extract_rhythm_key(audio44: np.ndarray, y16: np.ndarray) -> dict:
-    """BPM (multifeature + TempoCNN), тональность и динамика трека.
+    """Track BPM (multifeature + TempoCNN), key, and dynamics.
 
-    audio44 — моно 44.1 кГц; y16 — моно 16 кГц (для TempoCNN).
-    Ошибки пробрасываются выше с именем алгоритма.
+    audio44 — mono 44.1 kHz; y16 — mono 16 kHz (for TempoCNN).
+    Errors are propagated up with the algorithm name.
     """
     a = _algorithms()
     audio44 = np.ascontiguousarray(audio44, dtype=np.float32)
@@ -87,7 +87,7 @@ def extract_rhythm_key(audio44: np.ndarray, y16: np.ndarray) -> dict:
         bpm_multi = float(np.atleast_1d(bpm)[0])
     except Exception as exc:
         raise RuntimeError(
-            f"essentia: RhythmExtractor2013 не сработал: "
+            f"essentia: RhythmExtractor2013 failed: "
             f"{type(exc).__name__}: {exc}"
         ) from exc
 
@@ -97,14 +97,14 @@ def extract_rhythm_key(audio44: np.ndarray, y16: np.ndarray) -> dict:
         cnn_conf = float(cnn_out[1]) if cnn_out.size > 1 else 0.5
     except Exception as exc:
         raise RuntimeError(
-            f"essentia: TempoCNN не сработал: {type(exc).__name__}: {exc}"
+            f"essentia: TempoCNN failed: {type(exc).__name__}: {exc}"
         ) from exc
 
     try:
         key, scale, strength = a["key"](audio44)
     except Exception as exc:
         raise RuntimeError(
-            f"essentia: KeyExtractor не сработал: "
+            f"essentia: KeyExtractor failed: "
             f"{type(exc).__name__}: {exc}"
         ) from exc
 
@@ -112,7 +112,7 @@ def extract_rhythm_key(audio44: np.ndarray, y16: np.ndarray) -> dict:
         dyn, loudness = a["dynamics"](audio44)
     except Exception as exc:
         raise RuntimeError(
-            f"essentia: DynamicComplexity не сработал: "
+            f"essentia: DynamicComplexity failed: "
             f"{type(exc).__name__}: {exc}"
         ) from exc
 

@@ -1,7 +1,7 @@
 [project]
 name = "yt-music-analyzer"
 version = "0.1.0"
-description = "Локальное web-приложение для анализа музыкальных вкусов на основе истории YouTube"
+description = "Local web app for analyzing music taste from YouTube history"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

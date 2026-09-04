@@ -43,18 +43,18 @@ import {
 } from "@/components/ui/table"
 
 const chartConfig = {
-  listens: { label: "прослушивания" },
+  listens: { label: "plays" },
 }
 
 type Preset = "all" | "7d" | "30d" | "month" | "year" | "custom"
 
 const PRESET_LABELS: Record<Preset, string> = {
-  all: "Всё время",
-  "7d": "7 дней",
-  "30d": "30 дней",
-  month: "Этот месяц",
-  year: "Этот год",
-  custom: "Свой диапазон",
+  all: "All time",
+  "7d": "7 days",
+  "30d": "30 days",
+  month: "This month",
+  year: "This year",
+  custom: "Custom range",
 }
 
 function toIso(d: Date): string {
@@ -114,17 +114,17 @@ export function Dashboard() {
         ? [range.from, range.to].filter(Boolean).join(" — ")
         : PRESET_LABELS[preset]
 
-  if (isLoading) return <p className="text-muted-foreground">Загрузка…</p>
-  if (isError || !data) return <p>Не удалось загрузить данные.</p>
+  if (isLoading) return <p className="text-muted-foreground">Loading…</p>
+  if (isError || !data) return <p>Failed to load data.</p>
 
   if (!data.totals.music_listens) {
     return (
       <div className="flex flex-col gap-3">
-        <h1 className="text-lg font-bold text-black">Дашборд</h1>
+        <h1 className="text-lg font-bold text-black">Dashboard</h1>
         <Alert>
           <AlertDescription>
-            Нет данных{periodLabel && ` за период (${periodLabel})`}. Сначала
-            импортируйте историю и запустите фильтр музыки.
+            No data{periodLabel && ` for the period (${periodLabel})`}. First
+            import your history and run the music filter.
           </AlertDescription>
         </Alert>
       </div>
@@ -141,7 +141,7 @@ export function Dashboard() {
         isFetching ? "pointer-events-none opacity-60" : ""
       }`}
     >
-      <h1 className="text-lg font-bold text-black">Дашборд</h1>
+      <h1 className="text-lg font-bold text-black">Dashboard</h1>
 
       <div className="flex flex-wrap items-center gap-2">
         <Select
@@ -149,7 +149,7 @@ export function Dashboard() {
           onValueChange={(v) => setPreset(v as Preset)}
         >
           <SelectTrigger className="w-44">
-            <SelectValue placeholder="Период" />
+            <SelectValue placeholder="Period" />
           </SelectTrigger>
           <SelectContent>
             {(Object.keys(PRESET_LABELS) as Preset[]).map((p) => (
@@ -180,7 +180,7 @@ export function Dashboard() {
         )}
         {periodLabel && (
           <span className="text-muted-foreground text-sm">
-            Период: {periodLabel}
+            Period: {periodLabel}
           </span>
         )}
       </div>
@@ -188,16 +188,16 @@ export function Dashboard() {
       <div className="grid gap-3 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Топ исполнителей</CardTitle>
+            <CardTitle>Top artists</CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">#</TableHead>
-                  <TableHead>Исполнитель</TableHead>
-                  <TableHead>просл.</TableHead>
-                  <TableHead>треков</TableHead>
+                  <TableHead>Artist</TableHead>
+                  <TableHead>plays</TableHead>
+                  <TableHead>tracks</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -218,15 +218,15 @@ export function Dashboard() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Топ треков</CardTitle>
+            <CardTitle>Top tracks</CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">#</TableHead>
-                  <TableHead>Название</TableHead>
-                  <TableHead>просл.</TableHead>
+                  <TableHead>Title</TableHead>
+                  <TableHead>plays</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -257,7 +257,7 @@ export function Dashboard() {
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <CardTitle>
-            Динамика {granularity === "month" ? "по месяцам" : "по неделям"}
+            Timeline {granularity === "month" ? "by month" : "by week"}
           </CardTitle>
           <div className="flex gap-1">
             <Button
@@ -265,14 +265,14 @@ export function Dashboard() {
               variant={granularity === "week" ? "default" : "outline"}
               onClick={() => setGranularity("week")}
             >
-              Недели
+              Weeks
             </Button>
             <Button
               size="sm"
               variant={granularity === "month" ? "default" : "outline"}
               onClick={() => setGranularity("month")}
             >
-              Месяцы
+              Months
             </Button>
           </div>
         </CardHeader>
@@ -309,7 +309,7 @@ export function Dashboard() {
       <div className="grid gap-3 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>По часам суток</CardTitle>
+            <CardTitle>By hour of day</CardTitle>
           </CardHeader>
           <CardContent>
             <ChartContainer
@@ -335,7 +335,7 @@ export function Dashboard() {
 
         <Card>
           <CardHeader>
-            <CardTitle>По дням недели</CardTitle>
+            <CardTitle>By day of week</CardTitle>
           </CardHeader>
           <CardContent>
             <ChartContainer

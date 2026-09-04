@@ -28,20 +28,20 @@ const GRID =
   "grid grid-cols-[2.25rem_4.25rem_minmax(0,1fr)_10.5rem_4rem_4.5rem_4.5rem_4.5rem_4.5rem_6rem_6rem_4.5rem_5.5rem] items-center gap-1.5 px-1.5"
 
 const REASON_LABELS: [string, string][] = [
-  ["yt-music-app", "слушал в YouTube Music"],
-  ["topic-channel", "канал - Topic"],
-  ["vevo", "VEVO-канал"],
-  ["api:cat10", "YouTube API: категория Music"],
-  ["api:too-long", "слишком длинное (>12 ч, радиострим)"],
-  ["api:not-music", "YouTube API: не музыка"],
-  ["api-miss", "YouTube API: видео недоступно"],
-  ["manual", "вручную"],
-  ["manual-not-music", "вручную: канал скрыт"],
-  ["anti-pattern", "анти-паттерн в названии"],
-  ["no-signal", "нет признаков музыки"],
-  ["artist-dash", "формат «артист - трек»"],
-  ["channel-music", "музыкальный канал (голосование)"],
-  ["channel-not-music", "немузыкальный канал (голосование)"],
+  ["yt-music-app", "played in YouTube Music"],
+  ["topic-channel", "Topic channel"],
+  ["vevo", "VEVO channel"],
+  ["api:cat10", "YouTube API: Music category"],
+  ["api:too-long", "too long (>12 h, radio stream)"],
+  ["api:not-music", "YouTube API: not music"],
+  ["api-miss", "YouTube API: video unavailable"],
+  ["manual", "manually"],
+  ["manual-not-music", "manually: channel hidden"],
+  ["anti-pattern", "anti-pattern in title"],
+  ["no-signal", "no music signals"],
+  ["artist-dash", "\"artist - track\" title format"],
+  ["channel-music", "music channel (voted)"],
+  ["channel-not-music", "non-music channel (voted)"],
 ]
 
 function reasonLabel(reason: string): string {
@@ -60,58 +60,58 @@ function formatDuration(seconds: number | null): string {
 }
 
 const LANG_OPTIONS = [
-  { value: "ru", label: "русский" },
-  { value: "en", label: "английский" },
-  { value: "cjk", label: "яп./кит." },
+  { value: "ru", label: "Russian" },
+  { value: "en", label: "English" },
+  { value: "cjk", label: "Japanese/Chinese" },
 ]
 
 function techTooltip(t: TrackListItem): string {
-  const parts = [`классификация: ${reasonLabel(t.music_reason)}`]
+  const parts = [`classification: ${reasonLabel(t.music_reason)}`]
   if (t.tempo != null) {
     parts.push(`BPM: ${Math.round(t.tempo ?? 0)}`)
-    parts.push(`яркость: ${(t.brightness ?? 0).toFixed(2)}`)
-    if (t.key) parts.push(`тональность: ${t.key}`)
+    parts.push(`brightness: ${(t.brightness ?? 0).toFixed(2)}`)
+    if (t.key) parts.push(`key: ${t.key}`)
     if (t.loudness != null)
-      parts.push(`громкость: ${t.loudness.toFixed(1)} дБ`)
+      parts.push(`loudness: ${t.loudness.toFixed(1)} dB`)
     if (t.dynamics != null)
-      parts.push(`динамика: ${t.dynamics.toFixed(2)}`)
+      parts.push(`dynamics: ${t.dynamics.toFixed(2)}`)
     if (t.vocal_ratio != null)
-      parts.push(`вокал: ${Math.round(t.vocal_ratio * 100)}%`)
+      parts.push(`vocals: ${Math.round(t.vocal_ratio * 100)}%`)
     if (t.genres?.length)
-      parts.push(`жанр: ${t.genres.join(", ")}`)
+      parts.push(`genres: ${t.genres.join(", ")}`)
     if (t.instruments?.length)
-      parts.push(`инструменты: ${t.instruments.join(", ")}`)
+      parts.push(`instruments: ${t.instruments.join(", ")}`)
     const moods = [
-      `весёлость ${Math.round((t.mood_happy ?? 0) * 100)}%`,
-      `грусть ${Math.round((t.mood_sad ?? 0) * 100)}%`,
-      `спокойствие ${Math.round((t.mood_relaxed ?? 0) * 100)}%`,
-      `агрессия ${Math.round((t.mood_aggressive ?? 0) * 100)}%`,
-      `электронность ${Math.round((t.mood_electronic ?? 0) * 100)}%`,
-      `акустика ${Math.round((t.mood_acoustic ?? 0) * 100)}%`,
-      `танцевальность-вечеринки ${Math.round((t.mood_party ?? 0) * 100)}%`,
-      `эпичность ${Math.round((t.mood_epic ?? 0) * 100)}%`,
-      `мрачность ${Math.round((t.mood_dark ?? 0) * 100)}%`,
-      `романтика ${Math.round((t.mood_romantic ?? 0) * 100)}%`,
-      `атмосферность ${Math.round((t.mood_atmospheric ?? 0) * 100)}%`,
+      `happiness ${Math.round((t.mood_happy ?? 0) * 100)}%`,
+      `sadness ${Math.round((t.mood_sad ?? 0) * 100)}%`,
+      `calmness ${Math.round((t.mood_relaxed ?? 0) * 100)}%`,
+      `aggression ${Math.round((t.mood_aggressive ?? 0) * 100)}%`,
+      `electronic ${Math.round((t.mood_electronic ?? 0) * 100)}%`,
+      `acoustic ${Math.round((t.mood_acoustic ?? 0) * 100)}%`,
+      `party/danceability ${Math.round((t.mood_party ?? 0) * 100)}%`,
+      `epicness ${Math.round((t.mood_epic ?? 0) * 100)}%`,
+      `darkness ${Math.round((t.mood_dark ?? 0) * 100)}%`,
+      `romance ${Math.round((t.mood_romantic ?? 0) * 100)}%`,
+      `atmospheric ${Math.round((t.mood_atmospheric ?? 0) * 100)}%`,
     ]
-    parts.push(`настроение: ${moods.join(", ")}`)
+    parts.push(`mood: ${moods.join(", ")}`)
     parts.push(
-      `источник фич: ${t.features_source === "audio" ? "аудио" : "метаданные"}`
+      `feature source: ${t.features_source === "audio" ? "audio" : "metadata"}`
     )
   }
-  if (t.language) parts.push(`язык текста: ${t.language}`)
+  if (t.language) parts.push(`lyrics language: ${t.language}`)
   return parts.join("\n")
 }
 
 const SORT_COLUMNS: { key: TrackSort; label: string; align?: "right" }[] = [
   { key: "tempo", label: "BPM", align: "right" },
-  { key: "energy", label: "энергия", align: "right" },
-  { key: "danceability", label: "танц.", align: "right" },
-  { key: "acousticness", label: "акуст.", align: "right" },
-  { key: "play_count", label: "просл.", align: "right" },
-  { key: "first_listen", label: "первое", align: "right" },
-  { key: "last_listen", label: "последнее", align: "right" },
-  { key: "duration", label: "длит.", align: "right" },
+  { key: "energy", label: "energy", align: "right" },
+  { key: "danceability", label: "dance.", align: "right" },
+  { key: "acousticness", label: "acoust.", align: "right" },
+  { key: "play_count", label: "plays", align: "right" },
+  { key: "first_listen", label: "first", align: "right" },
+  { key: "last_listen", label: "last", align: "right" },
+  { key: "duration", label: "length", align: "right" },
 ]
 
 export function Tracks() {
@@ -279,7 +279,7 @@ export function Tracks() {
         className="sticky z-20 flex flex-col gap-2.5 bg-background pb-1"
         style={{ top: "var(--header-h, 0px)" }}
       >
-        <h1 className="text-lg font-bold text-black text-center">Вся музыка</h1>
+        <h1 className="text-lg font-bold text-black text-center">All music</h1>
 
         <form
           className="flex w-full items-center justify-center gap-1.5"
@@ -290,14 +290,14 @@ export function Tracks() {
         >
           <Input
             type="search"
-            placeholder="Поиск по названию или каналу…"
+            placeholder="Search by title or channel…"
             className="max-w-md flex-1"
             value={input}
             onChange={(e) => setInput(e.target.value)}
           />
-          <Button type="submit">Поиск</Button>
+          <Button type="submit">Search</Button>
           <Button type="button" variant="secondary" onClick={clearFilters}>
-            Очистить
+            Clear
           </Button>
         </form>
 
@@ -307,7 +307,7 @@ export function Tracks() {
             size="sm"
             onClick={() => setShowFilters((v) => !v)}
           >
-            {showFilters ? "[Скрыть фильтры]" : "[Дополнительные фильтры]"}
+            {showFilters ? "[Hide filters]" : "[More filters]"}
           </Button>
         </div>
 
@@ -320,16 +320,16 @@ export function Tracks() {
                   checked={hidden}
                   onChange={(e) => setHidden(e.target.checked)}
                 />
-                Исключённые
+                Excluded
               </label>
               <label className="flex cursor-pointer select-none items-center gap-1.5 text-sm">
                 <input
                   type="checkbox"
                   checked={instrumental}
                   onChange={(e) => setInstrumental(e.target.checked)}
-                  title="Только треки без вокала"
+                  title="Only tracks without vocals"
                 />
-                Инструментал
+                Instrumental
               </label>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-1.5">
@@ -338,10 +338,10 @@ export function Tracks() {
                 onValueChange={(v) => setClusterId(v === "all" ? null : Number(v))}
               >
                 <SelectTrigger className="w-60">
-                  <SelectValue placeholder="Все настроения" />
+                  <SelectValue placeholder="All moods" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Все настроения</SelectItem>
+                  <SelectItem value="all">All moods</SelectItem>
                   {clusters?.map((c) => (
                     <SelectItem key={c.id} value={String(c.id)}>
                       {c.name} · {c.size}
@@ -354,10 +354,10 @@ export function Tracks() {
                 onValueChange={(v) => setGenre(v === "any" ? "" : v)}
               >
                 <SelectTrigger className="w-44">
-                  <SelectValue placeholder="Любой жанр" />
+                  <SelectValue placeholder="Any genre" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="any">Любой жанр</SelectItem>
+                  <SelectItem value="any">Any genre</SelectItem>
                   {(genres ?? []).map((g) => (
                     <SelectItem key={g.name} value={g.name}>
                       {g.name_ru} ({g.count})
@@ -370,10 +370,10 @@ export function Tracks() {
                 onValueChange={(v) => setLanguage(v === "any" ? "" : v)}
               >
                 <SelectTrigger className="w-40">
-                  <SelectValue placeholder="Любой язык" />
+                  <SelectValue placeholder="Any language" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="any">Любой язык</SelectItem>
+                  <SelectItem value="any">Any language</SelectItem>
                   {LANG_OPTIONS.map((l) => (
                     <SelectItem key={l.value} value={l.value}>
                       {l.label}
@@ -387,29 +387,29 @@ export function Tracks() {
 
         {hidden && (
           <p className="text-muted-foreground text-sm">
-            Треки, помеченные как «не музыка». Кнопка ✓ возвращает трек в
-            библиотеку.
+            Tracks marked as "not music". The ✓ button returns a track to
+            the library.
           </p>
         )}
 
-        {isPending && <p className="text-muted-foreground">Загрузка…</p>}
-        {isError && <p>Не удалось загрузить данные.</p>}
+        {isPending && <p className="text-muted-foreground">Loading…</p>}
+        {isError && <p>Failed to load data.</p>}
 
         {data && total === 0 && !q && (
           <Alert>
             <AlertDescription>
-              Нет музыки.{" "}
+              No music yet.{" "}
               <Link to="/import" className="underline">
-                Импортируйте
+                Import
               </Link>{" "}
-              историю и запустите фильтр музыки.
+              your history and run the music filter.
             </AlertDescription>
           </Alert>
         )}
 
         {data && total === 0 && q && (
           <p className="text-muted-foreground text-sm">
-            Ничего не найдено по запросу «{q}».
+            Nothing found for "{q}".
           </p>
         )}
 
@@ -417,13 +417,13 @@ export function Tracks() {
           <p className="text-muted-foreground text-sm">
             {q ? (
               <>
-                Найдено: <b className="text-foreground">{total}</b> по запросу
-                «{q}»
+                Found: <b className="text-foreground">{total}</b> for "
+                {q}"
               </>
             ) : (
               <>
-                Всего: <b className="text-foreground">{total}</b> треков ·
-                загружено: {rows.length}
+                Total: <b className="text-foreground">{total}</b> tracks ·
+                loaded: {rows.length}
               </>
             )}
           </p>
@@ -444,8 +444,8 @@ export function Tracks() {
             >
               <span>#</span>
               <span />
-              <span>Название</span>
-              <span>Настроение</span>
+              <span>Title</span>
+              <span>Mood</span>
               {SORT_COLUMNS.map((col) => (
                 <button
                   key={col.key}
@@ -466,7 +466,7 @@ export function Tracks() {
                   ) : null}
                 </button>
               ))}
-              <span className="text-right">действия</span>
+              <span className="text-right">actions</span>
             </div>
 
             <div
@@ -586,7 +586,7 @@ export function Tracks() {
                           variant="ghost"
                           size="icon"
                           className="size-7"
-                          title="Вернуть в библиотеку (это музыка)"
+                          title="Restore to library (this is music)"
                           disabled={classify.isPending}
                           onClick={() =>
                             classify.mutate({
@@ -603,7 +603,7 @@ export function Tracks() {
                             variant="ghost"
                             size="icon"
                             className="hover:text-[#cc0000] size-7"
-                            title="Это не музыка"
+                            title="This is not music"
                             disabled={classify.isPending}
                             onClick={() =>
                               classify.mutate({
@@ -618,7 +618,7 @@ export function Tracks() {
                             variant="ghost"
                             size="icon"
                             className="hover:text-[#cc0000] size-7"
-                            title={`Скрыть весь канал «${t.channel}»`}
+                            title={`Hide entire channel "${t.channel}"`}
                             disabled={hideChannel.isPending}
                             onClick={() =>
                               hideChannel.mutate(t.channel)
@@ -640,11 +640,11 @@ export function Tracks() {
             className="flex h-10 items-center justify-center"
           >
             {isFetchingNextPage && (
-              <span className="text-muted-foreground text-sm">Загрузка…</span>
+              <span className="text-muted-foreground text-sm">Loading…</span>
             )}
             {!hasNextPage && (
               <span className="text-muted-foreground text-sm">
-                Все {total.toLocaleString("ru-RU")} треков загружены
+                All {total.toLocaleString("en-US")} tracks loaded
               </span>
             )}
           </div>

@@ -16,13 +16,13 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
     frontend_dist: Path = _REPO_ROOT / "frontend" / "dist"
     audio_analysis_limit: int = 5
-    # порог прослушиваний: треки с меньшим числом прослушиваний
-    # пропускаются на этапах аудио-анализа и поиска текстов
+    # listen-count threshold: tracks with fewer listens are skipped
+    # during audio analysis and lyrics fetching
     min_play_count: int = 2
     analyze_full_max: int = 300
     audio_workers: int = 2
-    # параллельных потоков анализа, когда аудио уже в кэше (сеть не нужна);
-    # узкое место — CPU: повышай до разумного числа ядер
+    # parallel analysis threads when audio is already cached (no network
+    # needed); the bottleneck is CPU: raise to a sensible number of cores
     audio_workers_cached: int = 8
     audio_delete_after: bool = False
     cluster_k: int = 0
@@ -31,8 +31,8 @@ class Settings(BaseSettings):
     )
     mb_enabled: bool = True
     lyrics_limit: int = 200
-    # порог доли вокала: YAMNet даёт низкие абсолютные вероятности
-    # («Singing» ~0.004–0.1 у вокальных треков), инструменталы ~0–0.005
+    # vocal ratio threshold: YAMNet gives low absolute probabilities
+    # ("Singing" ~0.004–0.1 for vocal tracks), instrumentals ~0–0.005
     lyrics_min_vocal: float = 0.3
     audio_cookies_from_browser: str = "chrome"
     audio_cookies_keyring: str = "basictext"

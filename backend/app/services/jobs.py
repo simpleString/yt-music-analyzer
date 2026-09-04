@@ -8,18 +8,19 @@ from app.models import AppMeta, Job
 
 KINDS = ("import", "filter", "audio", "clusters", "lyrics")
 
-# задание, чей прогресс не обновлялся дольше этого, считается мёртвым
-# (поток умер вместе с перезапуском сервера) и может быть перезапущено
+# a job whose progress hasn't been updated for longer than this is
+# considered dead (its thread died with the server restart) and may be
+# restarted
 STALE_AFTER = timedelta(minutes=10)
 
-# флаг отмены хранится в БД: задание может выполняться в другом процессе
+# cancel flag is stored in the DB: the job may be running in another process
 CANCEL_PREFIX = "cancel:"
 
 _cancel_events: dict[str, threading.Event] = {}
 
 
 def register_cancel(kind: str) -> threading.Event:
-    """Регистрирует событие отмены для запускаемого задания."""
+    """Registers a cancel event for the job being started."""
     ev = threading.Event()
     _cancel_events[kind] = ev
     return ev
@@ -32,7 +33,7 @@ def _clear_cancel_flag(session: Session, kind: str) -> None:
 
 
 def cancel_requested(kind: str) -> bool:
-    """True, если отмена запрошена (событие в памяти и/или флаг в БД)."""
+    """True if cancellation was requested (in-memory event and/or DB flag)."""
     ev = _cancel_events.get(kind)
     if ev is not None and ev.is_set():
         return True
@@ -41,28 +42,29 @@ def cancel_requested(kind: str) -> bool:
 
 
 def should_stop(kind: str, stop: threading.Event | None = None) -> bool:
-    """Единая проверка остановки для воркеров: локальный Event + флаг БД."""
+    """Single stop check for workers: local Event + DB flag."""
     if stop is not None and stop.is_set():
         return True
     return cancel_requested(kind)
 
 
 def request_cancel(kind: str) -> bool:
-    """Просит задание остановиться. False — задание не выполняется.
+    """Asks the job to stop. False — the job is not running.
 
-    Флаг пишется в БД, поэтому останавливается даже задание,
-    запущенное другим процессом (например, фоновым прогоном).
+    The flag is written to the DB, so even a job started by another
+    process (e.g. a background run) gets stopped.
     """
     with Session(engine) as session:
         job = get_job(session, kind)
         if job is None or job.status != "running":
             return False
         if _now() - job.updated_at >= STALE_AFTER:
-            # задание не обновляло прогресс давно: гасим запись сразу,
-            # чтобы разблокировать кнопку запуска, но флаг отмены оставляем —
-            # если поток жив (просто долго без прогресса), он остановится
+            # the job hasn't reported progress in a while: clear the
+            # record right away to unlock the start button, but keep the
+            # cancel flag — if the thread is alive (just slow without
+            # progress), it will stop
             job.status = "cancelled"
-            job.detail = "остановлено (задание не отвечало)"
+            job.detail = "stopped (job was unresponsive)"
             job.updated_at = _now()
             session.add(job)
             set_meta(session, CANCEL_PREFIX + kind, "1")
@@ -146,13 +148,13 @@ def fail_job(kind: str, error: str) -> None:
 
 
 def stop_job(kind: str, detail: str = "") -> None:
-    """Помечает задание остановленным пользователем."""
+    """Marks the job as stopped by the user."""
     with Session(engine) as session:
         job = get_job(session, kind)
         if job is None:
             return
         job.status = "cancelled"
-        job.detail = detail or "остановлено пользователем"
+        job.detail = detail or "stopped by user"
         job.updated_at = _now()
         _clear_cancel_flag(session, kind)
         session.add(job)
@@ -160,10 +162,10 @@ def stop_job(kind: str, detail: str = "") -> None:
 
 
 def cancel_orphans() -> None:
-    """При старте приложения: потоки прежнего процесса уже мертвы.
+    """On app startup: threads of the previous process are already dead.
 
-    Осиротевшие записи «running» блокируют кнопки до истечения
-    STALE_AFTER — помечаем их отменёнными сразу.
+    Orphaned "running" records block the buttons until STALE_AFTER
+    expires — mark them cancelled right away.
     """
     with Session(engine) as session:
         rows = session.exec(
@@ -171,7 +173,7 @@ def cancel_orphans() -> None:
         ).all()
         for job in rows:
             job.status = "cancelled"
-            job.detail = "прервано перезапуском сервера"
+            job.detail = "interrupted by server restart"
             job.updated_at = _now()
             session.add(job)
         if rows:

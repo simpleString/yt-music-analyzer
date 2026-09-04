@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 
 from app.models import Listen, Track
 
-WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 AVG_UNKNOWN_SECONDS = 210.0
 
 ARTIST_EXPR = "COALESCE(NULLIF(t.artist_canonical, ''), t.channel)"
@@ -162,7 +162,7 @@ def by_month(
 def by_week(
     session: Session, date_from: date | None = None, date_to: date | None = None
 ) -> list[tuple[str, int]]:
-    """Прослушивания по неделям; метка — дата понедельника этой недели."""
+    """Listens by week; label is the Monday date of that week."""
     join, params = _music_listen_join(date_from, date_to)
     rows = session.execute(
         text(

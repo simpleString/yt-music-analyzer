@@ -29,26 +29,26 @@ import {
 } from "@/components/ui/chart"
 
 const MOOD_LABELS: [string, string][] = [
-  ["mood_happy", "Весёлое"],
-  ["mood_sad", "Грустное"],
-  ["mood_relaxed", "Спокойное"],
-  ["mood_aggressive", "Агрессивное"],
-  ["mood_electronic", "Электронное"],
-  ["mood_acoustic", "Акустическое"],
-  ["mood_party", "Праздничное"],
-  ["mood_epic", "Эпичное"],
-  ["mood_dark", "Тёмное"],
-  ["mood_romantic", "Романтичное"],
-  ["mood_atmospheric", "Атмосферное"],
+  ["mood_happy", "Happy"],
+  ["mood_sad", "Sad"],
+  ["mood_relaxed", "Calm"],
+  ["mood_aggressive", "Aggressive"],
+  ["mood_electronic", "Electronic"],
+  ["mood_acoustic", "Acoustic"],
+  ["mood_party", "Party"],
+  ["mood_epic", "Epic"],
+  ["mood_dark", "Dark"],
+  ["mood_romantic", "Romantic"],
+  ["mood_atmospheric", "Atmospheric"],
 ]
 
 const FEATURE_LABELS: [string, string][] = [
-  ["energy", "Энергия"],
-  ["danceability", "Танцевальность"],
-  ["acousticness", "Акустика"],
-  ["brightness", "Яркость"],
-  ["dynamics", "Динамика"],
-  ["percussive", "Перкуссия"],
+  ["energy", "Energy"],
+  ["danceability", "Danceability"],
+  ["acousticness", "Acousticness"],
+  ["brightness", "Brightness"],
+  ["dynamics", "Dynamics"],
+  ["percussive", "Percussion"],
 ]
 
 const PIE_COLORS = [
@@ -60,14 +60,14 @@ const PIE_COLORS = [
 ]
 
 const MATCH_COLORS: Record<string, string> = {
-  "по тембру": "var(--chart-1)",
-  "по ритму": "var(--chart-2)",
-  "по гармонии": "var(--chart-3)",
-  "по характеру": "var(--chart-4)",
-  "по инструментам": "var(--chart-5)",
-  "по жанру": "var(--chart-1)",
-  "по тексту": "var(--chart-3)",
-  "по темам": "var(--chart-2)",
+  "by timbre": "var(--chart-1)",
+  "by rhythm": "var(--chart-2)",
+  "by harmony": "var(--chart-3)",
+  "by character": "var(--chart-4)",
+  "by instruments": "var(--chart-5)",
+  "by genre": "var(--chart-1)",
+  "by lyrics": "var(--chart-3)",
+  "by themes": "var(--chart-2)",
   essentia: "var(--chart-4)",
 }
 
@@ -170,15 +170,15 @@ export function TrackCard() {
   const similarItems = similarQuery.data?.pages.flatMap((p) => p.similar) ?? []
   const similarTotal = similarQuery.data?.pages[0]?.total ?? 0
 
-  if (isLoading) return <p className="text-muted-foreground">Загрузка…</p>
+  if (isLoading) return <p className="text-muted-foreground">Loading…</p>
   if (isError || !t)
     return (
       <div className="flex flex-col gap-4">
         <Alert variant="destructive">
-          <AlertDescription>Трек не найден.</AlertDescription>
+          <AlertDescription>Track not found.</AlertDescription>
         </Alert>
         <Button variant="outline" className="w-fit" onClick={() => navigate(-1)}>
-          Назад
+          Back
         </Button>
       </div>
     )
@@ -205,11 +205,11 @@ export function TrackCard() {
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
         <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
-          ← Назад
+          ← Back
         </Button>
       </div>
 
-      {/* Шапка */}
+      {/* Header */}
       <Card>
         <CardContent className="flex flex-wrap items-start gap-3">
           <a
@@ -234,24 +234,24 @@ export function TrackCard() {
               {t.cluster_name && (
                 <Badge variant="secondary">{t.cluster_name}</Badge>
               )}
-              {t.topic && <Badge variant="outline">тема: {t.topic}</Badge>}
+              {t.topic && <Badge variant="outline">topic: {t.topic}</Badge>}
               {t.language && <Badge variant="outline">{t.language}</Badge>}
               {t.sentiment != null && (
                 <Badge variant="outline">
-                  сентимент: {t.sentiment > 0 ? "+" : ""}
+                  sentiment: {t.sentiment > 0 ? "+" : ""}
                   {t.sentiment}
                 </Badge>
               )}
             </div>
             <dl className="text-muted-foreground mt-1 grid grid-cols-2 gap-x-6 gap-y-0.5 text-sm sm:grid-cols-3">
               <div>
-                <dt className="inline">прослушиваний: </dt>
+                <dt className="inline">plays: </dt>
                 <dd className="text-foreground inline font-medium">
                   {t.play_count}
                 </dd>
               </div>
               <div>
-                <dt className="inline">длительность: </dt>
+                <dt className="inline">duration: </dt>
                 <dd className="text-foreground inline font-medium">
                   {fmtDuration(t.duration)}
                 </dd>
@@ -263,19 +263,19 @@ export function TrackCard() {
                 </dd>
               </div>
               <div>
-                <dt className="inline">тональность: </dt>
+                <dt className="inline">key: </dt>
                 <dd className="text-foreground inline font-medium">
                   {t.key || "—"}
                 </dd>
               </div>
               <div>
-                <dt className="inline">первое: </dt>
+                <dt className="inline">first listen: </dt>
                 <dd className="text-foreground inline font-medium">
                   {t.first_listen ?? "—"}
                 </dd>
               </div>
               <div>
-                <dt className="inline">последнее: </dt>
+                <dt className="inline">last listen: </dt>
                 <dd className="text-foreground inline font-medium">
                   {t.last_listen ?? "—"}
                 </dd>
@@ -285,16 +285,16 @@ export function TrackCard() {
         </CardContent>
       </Card>
 
-      {/* Диаграммы */}
+      {/* Charts */}
       {hasFeatures ? (
         <div className="grid gap-3 md:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle>Настроения</CardTitle>
+              <CardTitle>Moods</CardTitle>
             </CardHeader>
             <CardContent>
               <ChartContainer
-                config={{ value: { label: "значение" } }}
+                config={{ value: { label: "value" } }}
                 className="aspect-auto h-72 w-full"
               >
                 <RadarChart data={moodData}>
@@ -314,11 +314,11 @@ export function TrackCard() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Характеристики</CardTitle>
+              <CardTitle>Features</CardTitle>
             </CardHeader>
             <CardContent>
               <ChartContainer
-                config={{ value: { label: "значение" } }}
+                config={{ value: { label: "value" } }}
                 className="aspect-auto h-72 w-full"
               >
                 <RadarChart data={featureData}>
@@ -339,11 +339,11 @@ export function TrackCard() {
           {genreData.length > 0 && (
             <Card>
               <CardHeader>
-                <CardTitle>Жанры</CardTitle>
+                <CardTitle>Genres</CardTitle>
               </CardHeader>
               <CardContent>
                 <ChartContainer
-                  config={{ value: { label: "вес" } }}
+                  config={{ value: { label: "weight" } }}
                   className="aspect-auto h-64 w-full"
                 >
                   <PieChart>
@@ -388,11 +388,11 @@ export function TrackCard() {
           {instrumentData.length > 0 && (
             <Card>
               <CardHeader>
-                <CardTitle>Инструменты</CardTitle>
+                <CardTitle>Instruments</CardTitle>
               </CardHeader>
               <CardContent>
                 <ChartContainer
-                  config={{ value: { label: "вес" } }}
+                  config={{ value: { label: "weight" } }}
                   className="aspect-auto h-64 w-full"
                 >
                   <PieChart>
@@ -437,23 +437,23 @@ export function TrackCard() {
       ) : (
         <Alert>
           <AlertDescription>
-            Трек не проанализирован — запустите «Аудио-анализ» на странице
-            импорта, чтобы увидеть настроения, жанры и инструменты.
+            Track not analyzed yet — run "Audio analysis" on the import page
+            to see moods, genres, and instruments.
           </AlertDescription>
         </Alert>
       )}
 
-      {/* Текст песни */}
+      {/* Lyrics */}
       {t.has_lyrics && (
         <Card>
           <CardHeader className="flex-row items-center justify-between">
-            <CardTitle>Текст песни</CardTitle>
+            <CardTitle>Lyrics</CardTitle>
             <Button
               size="sm"
               variant="outline"
               onClick={() => setShowLyrics((v) => !v)}
             >
-              {showLyrics ? "Свернуть" : "Развернуть"}
+              {showLyrics ? "Collapse" : "Expand"}
             </Button>
           </CardHeader>
           {showLyrics && lyrics && (
@@ -466,19 +466,19 @@ export function TrackCard() {
         </Card>
       )}
 
-      {/* Похожие треки */}
+      {/* Similar tracks */}
       <Card>
         <CardHeader>
-          <CardTitle>Похожие треки</CardTitle>
+          <CardTitle>Similar tracks</CardTitle>
           <CardDescription>
-            взвешенная метрика: тембр · ритм · гармония · характер ·
-            инструменты · жанр · текст · темы
+            weighted metric: timbre · rhythm · harmony · character ·
+            instruments · genre · lyrics · themes
           </CardDescription>
         </CardHeader>
         <CardContent>
           {similarQuery.isPending ? (
             <p className="text-muted-foreground text-sm">
-              Подбор похожих треков…
+              Finding similar tracks…
             </p>
           ) : similarItems.length > 0 ? (
             <>
@@ -504,17 +504,17 @@ export function TrackCard() {
                   const maxD = Math.max(
                     ...similarItems.map((x) => x.distance)
                   )
-                  // смещённая шкала: всё в рекомендациях уже «похоже»,
-                  // поэтому худший из топа ≥ 50%, лучший → 100%
+                  // skewed scale: everything in recommendations is already
+                  // "similar", so worst of the top ≥ 50%, best → 100%
                   const sim = maxD > 0 ? 0.5 + 0.5 * (1 - s.distance / maxD) : 1
                   const pct = Math.round(sim * 100)
-                  // полная градиентная гамма на смещённом диапазоне 50–100%
+                  // full gradient gamma over the skewed 50-100% range
                   const hue = 45 + (142 - 45) * ((sim - 0.5) * 2)
                   return (
                     <li
                       key={s.track.video_id}
                       className="hover:bg-[#ffffcc] flex cursor-pointer items-center gap-1.5 border-b border-[#e0e0e0] px-1 py-0.5 last:border-b-0"
-                      title={`расстояние: ${s.distance}`}
+                      title={`distance: ${s.distance}`}
                       onClick={() => navigate(`/track/${s.track.video_id}`)}
                     >
                       <span className="text-muted-foreground w-6 shrink-0 text-right text-sm tabular-nums">
@@ -572,31 +572,31 @@ export function TrackCard() {
               <div ref={similarSentinelRef} className="h-4" />
               {similarQuery.isFetchingNextPage && (
                 <p className="text-muted-foreground py-2 text-center text-sm">
-                  Загрузка ещё…
+                  Loading more…
                 </p>
               )}
               {!similarQuery.hasNextPage && similarItems.length > 0 && (
                 <p className="text-muted-foreground py-2 text-center text-xs">
-                  показано все {similarTotal} треков
+                  showing all {similarTotal} tracks
                 </p>
               )}
             </>
           ) : (
             <p className="text-muted-foreground text-sm">
-              Недостаточно проанализированных треков для сравнения.
+              Not enough analyzed tracks to compare.
             </p>
           )}
         </CardContent>
       </Card>
 
-      {/* Похожие треки (Essentia) — infinite feed */}
+      {/* Similar tracks (Essentia) — infinite feed */}
       {essentiaItems.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Похожие треки (Essentia)</CardTitle>
+            <CardTitle>Similar tracks (Essentia)</CardTitle>
             <CardDescription>
-              жанры · инструменты · настроения · вокал ·{" "}
-              {essentiaTotal} всего
+              genres · instruments · moods · vocals ·{" "}
+              {essentiaTotal} total
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -610,7 +610,7 @@ export function TrackCard() {
                   <li
                     key={`${s.track.video_id}-${i}`}
                     className="hover:bg-[#ffffcc] flex cursor-pointer items-center gap-1.5 border-b border-[#e0e0e0] px-1 py-0.5 last:border-b-0"
-                    title={`расстояние: ${s.distance}`}
+                    title={`distance: ${s.distance}`}
                     onClick={() => navigate(`/track/${s.track.video_id}`)}
                   >
                     <span className="text-muted-foreground w-6 shrink-0 text-right text-sm tabular-nums">
@@ -663,12 +663,12 @@ export function TrackCard() {
             <div ref={sentinelRef} className="h-4" />
             {essentiaQuery.isFetchingNextPage && (
               <p className="text-muted-foreground py-2 text-center text-sm">
-                Загрузка ещё…
+                Loading more…
               </p>
             )}
             {!essentiaQuery.hasNextPage && essentiaItems.length > 0 && (
               <p className="text-muted-foreground py-2 text-center text-xs">
-                показано все {essentiaTotal} треков
+                showing all {essentiaTotal} tracks
               </p>
             )}
           </CardContent>
@@ -678,17 +678,17 @@ export function TrackCard() {
         <Card>
           <CardContent className="py-6">
             <p className="text-muted-foreground text-center text-sm">
-              Подбор похожих треков…
+              Finding similar tracks…
             </p>
           </CardContent>
         </Card>
       )}
 
-      {/* Похожие исполнители */}
+      {/* Similar artists */}
       {recs?.similar_artists && recs.similar_artists.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Похожие исполнители из вашей истории</CardTitle>
+            <CardTitle>Similar artists from your history</CardTitle>
           </CardHeader>
           <CardContent>
             <ul className="grid gap-2 md:grid-cols-2">
@@ -700,8 +700,8 @@ export function TrackCard() {
                   <span className="min-w-0">
                     <b className="block truncate text-sm">{a.channel}</b>
                     <span className="text-muted-foreground text-xs">
-                      {a.tracks_analyzed} из {a.tracks_total} треков
-                      проанализировано · {a.plays} просл.
+                      {a.tracks_analyzed} of {a.tracks_total} tracks
+                      analyzed · {a.plays} plays
                     </span>
                   </span>
                   <Badge variant="secondary" className="shrink-0">
@@ -718,10 +718,10 @@ export function TrackCard() {
       {recs?.mb_artists && recs.mb_artists.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Новые исполнители</CardTitle>
+            <CardTitle>New artists</CardTitle>
             <CardDescription>
               MusicBrainz
-              {recs.mood_name && ` · настроение «${recs.mood_name}»`}
+              {recs.mood_name && ` · mood "${recs.mood_name}"`}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -744,7 +744,7 @@ export function TrackCard() {
 
       <p className="text-muted-foreground text-sm">
         <Link to="/" className="hover:underline">
-          ← ко всем трекам
+          ← back to all tracks
         </Link>
       </p>
     </div>

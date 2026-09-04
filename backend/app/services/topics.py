@@ -1,15 +1,15 @@
-"""Словарная тематизация текстов песен (RU/EN).
+"""Dictionary-based topic modeling of song lyrics (RU/EN).
 
-Тема — набор стемов; извлекается нормализованный вектор
-{тема: доля совпадений}. Подход повторяет sentiment_score
-из lyrics.py: подсчёт вхождений стемов в нижнем регистре.
+A topic is a set of stems; a normalized vector {topic: match share}
+is extracted. The approach mirrors sentiment_score from lyrics.py:
+counting lowercase stem occurrences.
 """
 
 import json
 import re
 
 TOPIC_DICTS: dict[str, dict[str, tuple[str, ...]]] = {
-    "любовь": {
+    "love": {
         "ru": (
             "любл люблю любовь любим мила милая милый нежн нежность поцелуй "
             "сердц сердечн обним встреч влюб скучаю ревн"
@@ -19,7 +19,7 @@ TOPIC_DICTS: dict[str, dict[str, tuple[str, ...]]] = {
             "forever together soul"
         ),
     },
-    "разлука и потеря": {
+    "separation and loss": {
         "ru": (
             "прощай ушёл ушла ушли верн забыл забыла разрыв расста потеря "
             "одинок пуст тоск груст печал слез слёз плач рыда брошен"
@@ -29,7 +29,7 @@ TOPIC_DICTS: dict[str, dict[str, tuple[str, ...]]] = {
             "break cry crying tears farewell empt"
         ),
     },
-    "город и улицы": {
+    "city and streets": {
         "ru": (
             "город улиц квартал двор проспект метро троллейбус автобус "
             "фонар асфальт подъезд крыш окраин центр район витрин неон"
@@ -39,7 +39,7 @@ TOPIC_DICTS: dict[str, dict[str, tuple[str, ...]]] = {
             "pavement rooftop neighborhood boulevard"
         ),
     },
-    "дорога и путь": {
+    "road and travel": {
         "ru": (
             "дорог путь ед еду поезд самолёт вокзал чемодан маршрут "
             "километр шоссе путешеств бегу иду идём уезжаю"
@@ -49,7 +49,7 @@ TOPIC_DICTS: dict[str, dict[str, tuple[str, ...]]] = {
             "driving ride destination trip path"
         ),
     },
-    "ночь и сон": {
+    "night and sleep": {
         "ru": (
             "ночь ночной бессонниц сон сновиден луна звёзд звезда полноч "
             "темнот сумрак засыпаю просну утро рассвет заря"
@@ -59,7 +59,7 @@ TOPIC_DICTS: dict[str, dict[str, tuple[str, ...]]] = {
             "dawn sunrise twilight shadow evening"
         ),
     },
-    "природа": {
+    "nature": {
         "ru": (
             "море океан волн берег рек лес гор поле небо дожд гроза "
             "ветер снег зим лето весн осен солнц трав цветок листв"
@@ -69,7 +69,7 @@ TOPIC_DICTS: dict[str, dict[str, tuple[str, ...]]] = {
             "storm wind snow winter summer autumn sun grass flower leaf"
         ),
     },
-    "война и борьба": {
+    "war and struggle": {
         "ru": (
             "война враг бой битва сражен оруж пул огон солдат арм "
             "защит герой знамен побед сражат борьб сил"
@@ -79,7 +79,7 @@ TOPIC_DICTS: dict[str, dict[str, tuple[str, ...]]] = {
             "victory flag struggle survive defend"
         ),
     },
-    "свобода и бунт": {
+    "freedom and rebellion": {
         "ru": (
             "свобод вол бунт протест правил запрет клетк цеп побег "
             "сбежал революц знам независим своем волен"
@@ -89,7 +89,7 @@ TOPIC_DICTS: dict[str, dict[str, tuple[str, ...]]] = {
             "revolution independent wild"
         ),
     },
-    "вечеринка и танцы": {
+    "party and dance": {
         "ru": (
             "танц танцую вечеринк друз гуля праздник клуб музык "
             "весел хлопа двига диджей"
@@ -99,7 +99,7 @@ TOPIC_DICTS: dict[str, dict[str, tuple[str, ...]]] = {
             "jump drink celebrate dj beat"
         ),
     },
-    "внутренний поиск": {
+    "inner search": {
         "ru": (
             "кто я зачем смысл жизнь судь ищ ищу ответ вопрос "
             "душ вера надежд мечт цель позна себя истин"
@@ -119,11 +119,11 @@ _WORD_RE = re.compile(r"[a-zа-яё]+")
 
 
 def _count_stems(text: str, stems: tuple[str, ...]) -> int:
-    """Число слов, начинающихся с одного из стемов."""
+    """Number of words starting with one of the stems."""
     stem_set = frozenset(stems.split() if isinstance(stems, str) else stems)
     n = 0
     for word in _WORD_RE.findall(text):
-        # префиксный матчинг: достаточно, что начало слова — известный стем
+        # prefix matching: it suffices that the word starts with a known stem
         for length in range(min(len(word), 8), 1, -1):
             if word[:length] in stem_set:
                 n += 1
@@ -132,10 +132,11 @@ def _count_stems(text: str, stems: tuple[str, ...]) -> int:
 
 
 def extract_topics(text: str, language: str = "") -> dict[str, float]:
-    """Нормализованный вектор тем для текста.
+    """Normalized topic vector for a text.
 
-    Возвращает {тема: вес в 0..1}, сумма весов = 1 (если есть совпадения),
-    иначе {}. language: "ru"/"en"/"" — при "" определяется автоматически.
+    Returns {topic: weight in 0..1} with weights summing to 1 (if there
+    are matches), otherwise {}. language: "ru"/"en"/"" — with "" it is
+    detected automatically.
     """
     from app.services.lyrics import detect_language
 
@@ -152,7 +153,7 @@ def extract_topics(text: str, language: str = "") -> dict[str, float]:
 
 
 def dominant_topic(vector_json: str) -> str:
-    """Название доминирующей темы из json-вектора ('' если пусто)."""
+    """Name of the dominant topic from a json vector ('' if empty)."""
     try:
         vec = json.loads(vector_json) if vector_json else {}
     except ValueError:

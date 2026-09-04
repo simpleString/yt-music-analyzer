@@ -17,19 +17,19 @@ import {
 import { Progress } from "@/components/ui/progress"
 
 const KIND_LABELS: Record<Job["kind"], string> = {
-  import: "Импорт истории",
-  filter: "Фильтр музыки",
-  audio: "Аудио-анализ",
-  clusters: "Кластеризация",
-  lyrics: "Тексты песен",
+  import: "History import",
+  filter: "Music filter",
+  audio: "Audio analysis",
+  clusters: "Clustering",
+  lyrics: "Lyrics",
 }
 
 const STATUS_LABELS: Record<JobStatus, string> = {
-  pending: "ожидает",
-  running: "выполняется",
-  done: "готово",
-  error: "ошибка",
-  cancelled: "остановлено",
+  pending: "pending",
+  running: "running",
+  done: "done",
+  error: "error",
+  cancelled: "cancelled",
 }
 
 const STATUS_VARIANTS: Record<
@@ -46,11 +46,11 @@ const STATUS_VARIANTS: Record<
 function formatEta(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return ""
   const m = Math.round(seconds / 60)
-  if (m < 1) return "меньше минуты"
-  if (m < 60) return `~${m} мин`
+  if (m < 1) return "less than a minute"
+  if (m < 60) return `~${m} min`
   const h = Math.floor(m / 60)
   const rest = m % 60
-  return `~${h} ч${rest ? ` ${rest} мин` : ""}`
+  return `~${h} h${rest ? ` ${rest} min` : ""}`
 }
 
 function ageSeconds(updatedAt: string | undefined): number | null {
@@ -62,7 +62,7 @@ function ageSeconds(updatedAt: string | undefined): number | null {
   return Math.max(0, Math.round((Date.now() - t) / 1000))
 }
 
-/** Скорость выполнения (треков/сек) по истории значений done за минуту. */
+/** Processing rate (tracks/sec) from the done-value history over the last minute. */
 function useJobRate(kind: string, done: number, active: boolean) {
   const hist = useRef<{ t: number; done: number }[]>([])
   useEffect(() => {
@@ -95,7 +95,7 @@ function JobRow({
   cancelPending: boolean
 }) {
   const running = job.status === "running"
-  // тик каждую секунду: «обновлено N с назад» живёт между запросами
+  // tick every second: the "updated N s ago" label lives between requests
   const [, setTick] = useState(0)
   useEffect(() => {
     if (!running) return
@@ -104,8 +104,8 @@ function JobRow({
   }, [running])
   const rate = useJobRate(job.kind, job.done, running)
   const age = running ? ageSeconds(job.updated_at) : null
-  const cachedMatch = running ? /кэш (\d+)/.exec(job.detail) : null
-  const downloadMatch = running ? /скачка (\d+)/.exec(job.detail) : null
+  const cachedMatch = running ? /cache (\d+)/.exec(job.detail) : null
+  const downloadMatch = running ? /download (\d+)/.exec(job.detail) : null
   const eta =
     running && rate && job.total > job.done
       ? formatEta((job.total - job.done) / rate)
@@ -130,20 +130,20 @@ function JobRow({
         )}
         {running && cachedMatch && (
           <Badge variant="outline" className="text-xs">
-            осталось · кэш: {cachedMatch[1]}
+            remaining · cache: {cachedMatch[1]}
           </Badge>
         )}
         {running && downloadMatch && (
           <Badge variant="outline" className="text-xs">
-            осталось · скачка: {downloadMatch[1]}
+            remaining · download: {downloadMatch[1]}
           </Badge>
         )}
         {running && rate != null && (
           <span className="text-muted-foreground text-xs tabular-nums">
             {rate >= 1 / 60
-              ? `${Math.max(1, Math.round(rate * 60))} тр/мин`
-              : `${rate.toFixed(2)} тр/с`}
-            {eta && ` · осталось ${eta}`}
+              ? `${Math.max(1, Math.round(rate * 60))} tracks/min`
+              : `${rate.toFixed(2)} tracks/sec`}
+            {eta && ` · ${eta} remaining`}
           </span>
         )}
         {running && age != null && (
@@ -154,11 +154,11 @@ function JobRow({
             )}
             title={
               age > 30
-                ? "Давно нет обновлений — возможно, задание зависло"
+                ? "No updates for a while — the job may be stuck"
                 : undefined
             }
           >
-            обновлено {age} с назад
+            updated {age} s ago
           </span>
         )}
         {running && (
@@ -167,11 +167,11 @@ function JobRow({
             size="sm"
             className="hover:text-[#cc0000] h-6 gap-1 px-2 text-xs"
             disabled={cancelPending}
-            title="Остановить задание"
+            title="Stop the job"
             onClick={() => onCancel(job.kind)}
           >
             <Square className="size-3" />
-            Стоп
+            Stop
           </Button>
         )}
       </div>
@@ -208,23 +208,23 @@ export function JobsPanel() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Задания</CardTitle>
+        <CardTitle>Jobs</CardTitle>
         <CardDescription>
-          Обновляется автоматически (1 раз в секунду во время выполнения)
+          Refreshes automatically (once per second while running)
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-2.5">
         {totals.tracks_total > 0 && (
           <p className="text-muted-foreground text-sm">
-            Прослушиваний музыки:{" "}
-            <b className="text-foreground">{totals.music_listens}</b> из{" "}
-            {totals.listens_total} · музыкальных треков:{" "}
-            <b className="text-foreground">{totals.music_tracks}</b> · оценочное
-            время: <b className="text-foreground">{totals.hours_est} ч</b>
+            Music listens:{" "}
+            <b className="text-foreground">{totals.music_listens}</b> of{" "}
+            {totals.listens_total} · music tracks:{" "}
+            <b className="text-foreground">{totals.music_tracks}</b> · estimated
+            time: <b className="text-foreground">{totals.hours_est} h</b>
             {totals.first_listen && (
               <>
                 {" "}
-                · период: {totals.first_listen.slice(0, 10)} —{" "}
+                · period: {totals.first_listen.slice(0, 10)} —{" "}
                 {totals.last_listen?.slice(0, 10)}
               </>
             )}
@@ -232,7 +232,7 @@ export function JobsPanel() {
         )}
         {jobs.length === 0 && (
           <p className="text-muted-foreground text-sm">
-            Заданий пока не было. Начните с импорта истории ниже.
+            No jobs yet. Start by importing your history below.
           </p>
         )}
         {jobs.map((job) => (

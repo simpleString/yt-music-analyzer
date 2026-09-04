@@ -54,7 +54,7 @@ export function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-3">
-      <h1 className="text-lg font-bold text-black">Настройки</h1>
+      <h1 className="text-lg font-bold text-black">Settings</h1>
 
       {error && (
         <Alert variant="destructive">
@@ -64,21 +64,21 @@ export function SettingsPage() {
       {saved && (
         <Alert>
           <AlertDescription>
-            Сохранено в .env и применено без перезапуска.
+            Saved to .env and applied without a restart.
           </AlertDescription>
         </Alert>
       )}
 
       <Card>
         <CardHeader>
-          <CardTitle>Параметры .env</CardTitle>
+          <CardTitle>.env parameters</CardTitle>
           <CardDescription>
-            Изменения записываются в файл .env и вступают в силу сразу.
+            Changes are written to the .env file and take effect immediately.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {fields.length === 0 && (
-            <p className="text-muted-foreground text-sm">Загрузка…</p>
+            <p className="text-muted-foreground text-sm">Loading…</p>
           )}
           <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
             {fields.map((f) => {
@@ -136,7 +136,7 @@ export function SettingsPage() {
               disabled={save.isPending || fields.length === 0}
               onClick={() => save.mutate()}
             >
-              {save.isPending ? "Сохранение…" : "Сохранить"}
+              {save.isPending ? "Saving…" : "Save"}
             </Button>
           </div>
         </CardContent>

@@ -1,8 +1,8 @@
-"""Одноразовый пересчёт YAMNet tags/vocal_ratio по кэшированным wav.
+"""One-off recompute of YAMNet tags/vocal_ratio from cached wav files.
 
-Причина: старая формула (sigmoid от среднего логитов) занижала долю
-вокала почти до нуля, из-за чего lyrics-джоб не находил кандидатов.
-Запуск: .venv/bin/python tools/retag_vocal.py
+Reason: the old formula (sigmoid of averaged logits) drove the vocal
+ratio down to nearly zero, so the lyrics job found no candidates.
+Usage: .venv/bin/python tools/retag_vocal.py
 """
 
 import json
@@ -23,7 +23,7 @@ from sqlmodel import Session
 
 def main() -> None:
     if not ensure_yamnet():
-        print("YAMNet недоступен")
+        print("YAMNet unavailable")
         return
     with Session(engine) as session:
         rows = session.execute(
@@ -34,7 +34,7 @@ def main() -> None:
             )
         ).all()
         ids = [r[0] for r in rows]
-    print(f"треков к пересчёту: {len(ids)}")
+    print(f"tracks to recompute: {len(ids)}")
 
     def work(tid: str):
         wav = Path("data/audio") / f"{tid}.wav"
@@ -70,9 +70,9 @@ def main() -> None:
                 done += 1
                 if done % 200 == 0:
                     session.commit()
-                    print(f"  {done} пересчитано…")
+                    print(f"  {done} recomputed…")
             session.commit()
-    print(f"готово: {done}")
+    print(f"done: {done}")
 
 
 if __name__ == "__main__":

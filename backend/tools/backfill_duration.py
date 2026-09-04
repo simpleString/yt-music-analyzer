@@ -1,8 +1,8 @@
-"""Одноразовый бэкфилл Track.duration из кэшированных аудиофайлов.
+"""One-off backfill of Track.duration from cached audio files.
 
-Длительность раньше бралась только из YouTube API; теперь анализ
-сохраняет её, но уже проанализированные треки оставались без неё.
-Запуск: .venv/bin/python tools/backfill_duration.py
+Duration used to come only from the YouTube API; analysis now saves
+it, but already-analyzed tracks were left without it.
+Usage: .venv/bin/python tools/backfill_duration.py
 """
 
 import sys
@@ -27,7 +27,7 @@ def main() -> None:
             )
         ).all()
         ids = [r[0] for r in rows]
-        print(f"треков без длительности с анализом: {len(ids)}")
+        print(f"analyzed tracks without duration: {len(ids)}")
         done = missing = 0
         for tid in ids:
             path = None
@@ -54,9 +54,9 @@ def main() -> None:
             done += 1
             if done % 500 == 0:
                 session.commit()
-                print(f"  {done} обновлено…")
+                print(f"  {done} updated…")
         session.commit()
-        print(f"готово: обновлено {done}, без файла/ошибки: {missing}")
+        print(f"done: updated {done}, missing file/failed: {missing}")
 
 
 if __name__ == "__main__":

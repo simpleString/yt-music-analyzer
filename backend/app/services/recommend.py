@@ -18,14 +18,14 @@ MB_API = "https://musicbrainz.org/ws/2/artist"
 MIN_INTERVAL = 1.1
 
 MOOD_TAGS = {
-    "Весёлое": ["pop", "dance"],
-    "Энергичное": ["electronic", "dance"],
-    "Спокойное": ["ambient", "chillout"],
-    "Меланхоличное": ["indie", "post-rock"],
-    "Эпичное": ["orchestral", "post-rock"],
-    "Тёмное": ["gothic", "industrial"],
-    "Романтичное": ["acoustic", "chanson"],
-    "Атмосферное": ["ambient", "downtempo"],
+    "Happy": ["pop", "dance"],
+    "Energetic": ["electronic", "dance"],
+    "Calm": ["ambient", "chillout"],
+    "Melancholic": ["indie", "post-rock"],
+    "Epic": ["orchestral", "post-rock"],
+    "Dark": ["gothic", "industrial"],
+    "Romantic": ["acoustic", "chanson"],
+    "Atmospheric": ["ambient", "downtempo"],
 }
 
 _last_call = 0.0
@@ -47,7 +47,7 @@ MOOD_COLS = [
     "mood_atmospheric",
 ]
 
-# веса групп фич для похожести v2
+# feature group weights for similarity v2
 W_TIMBRE = 0.15
 W_EMBEDDING = 0.30
 W_RHYTHM = 0.15
@@ -58,8 +58,8 @@ W_INSTRUMENTS = 0.10
 W_GENRE = 0.10
 W_LYRICS = 0.075
 W_TOPICS = 0.075
-KEY_BONUS = 0.05  # скидка к дистанции гармонии за совпадение тональности
-KEY_CONF_GATE = 0.7  # минимальная mode_conf обоих треков для бонуса
+KEY_BONUS = 0.05  # harmony distance discount for a matching musical key
+KEY_CONF_GATE = 0.7  # minimum mode_conf of both tracks for the bonus
 ARTIST_SHRINKAGE = 3.0
 MIN_V2_TRACKS = 2
 
@@ -74,7 +74,7 @@ def _parse(v: str | None) -> np.ndarray | None:
 
 
 def _parse_embedding(v: str | None) -> np.ndarray | None:
-    """base64(float16[1280]) из AudioFeatures.embedding → np.float32."""
+    """base64(float16[1280]) from AudioFeatures.embedding → np.float32."""
     if not v:
         return None
     try:
@@ -94,10 +94,11 @@ def _vec_cosine_dist(a: np.ndarray, b: np.ndarray) -> float | None:
 def _v2_matrix(
     session: Session, features: list[AudioFeatures], smooth: bool = True
 ) -> tuple[dict[str, dict[str, np.ndarray]], list[AudioFeatures]]:
-    """Строит стандартизованные группы: {группа: {track_id: вектор}}.
+    """Builds standardized groups: {group: {track_id: vector}}.
 
-    При smooth=True вектор трека сглаживается центроидом его исполнителя
-    (shrinkage α = n/(n+k)) — для рекомендаций; для кластеризации smooth=False.
+    With smooth=True the track vector is smoothed toward its artist's
+    centroid (shrinkage α = n/(n+k)) — for recommendations;
+    clustering uses smooth=False.
     """
     usable = [
         f
@@ -135,7 +136,7 @@ def _v2_matrix(
         )
         return np.concatenate([mfcc, chroma, contrast, rhythm, macro])
 
-    # центроиды исполнителей в raw-пространстве (для сглаживания)
+    # artist centroids in raw space (for smoothing)
     by_artist: dict[str, list[np.ndarray]] = {}
     track_artist: dict[str, str] = {}
     if smooth:
@@ -170,28 +171,28 @@ def _v2_matrix(
 
 
 GROUP_LABELS = {
-    "embedding": "по нейро-тембру",
-    "timbre": "по тембру",
-    "rhythm": "по ритму",
-    "harmony": "по гармонии",
-    "macro": "по характеру",
-    "moods": "по настроению",
-    "instruments": "по инструментам",
-    "genre": "по жанру",
-    "lyrics": "по тексту",
-    "topics": "по темам",
+    "embedding": "by neural timbre",
+    "timbre": "by timbre",
+    "rhythm": "by rhythm",
+    "harmony": "by harmony",
+    "macro": "by character",
+    "moods": "by mood",
+    "instruments": "by instruments",
+    "genre": "by genre",
+    "lyrics": "by lyrics",
+    "topics": "by topics",
 }
 
-# размерности векторных групп (для нормализации масштаба L2-расстояний);
-# timbre = mfcc (26) + contrast (7), embedding — косинус, dim не важна
+# vector group dimensions (to normalize the scale of L2 distances);
+# timbre = mfcc (26) + contrast (7), embedding uses cosine, dim doesn't matter
 GROUP_DIMS = {"timbre": 33, "harmony": 12, "rhythm": 3, "macro": 5}
 
 
 def _parse_tags(tags_json: str | None) -> dict:
-    """Разбор Essentia tags json.
+    """Parse Essentia tags JSON.
 
-    Жанры берутся из распределения стилей (топ-20), при отсутствии —
-    из старого списка топ-3. Также: инструменты и сырые moodtheme-теги.
+    Genres come from the style distribution (top-20), falling back to
+    the old top-3 list. Also returns instruments and raw moodtheme tags.
     """
     if not tags_json:
         return {}
@@ -225,7 +226,7 @@ def _parse_tags(tags_json: str | None) -> dict:
 def _cosine_dist(
     a: dict[str, float] | None, b: dict[str, float] | None
 ) -> float | None:
-    """Косинусное расстояние между разреженными векторами-словарями."""
+    """Cosine distance between sparse dict vectors."""
     if not a or not b:
         return None
     dot = sum(v * b.get(k, 0.0) for k, v in a.items())
@@ -245,11 +246,11 @@ def _load_semantic(
     dict[str, object],
     dict[str, dict[str, float]],
 ]:
-    """Теговые и текстовые данные треков.
+    """Tag and lyrics data for the tracks.
 
-    Возвращает (genres, instruments, topics, tfidf, moodtags):
-    genres/instruments/topics/moodtags — {track_id: вектор-словарь};
-    tfidf — {track_id: нормированный разреженный вектор текста}.
+    Returns (genres, instruments, topics, tfidf, moodtags):
+    genres/instruments/topics/moodtags — {track_id: sparse dict vector};
+    tfidf — {track_id: normalized sparse lyrics vector}.
     """
     genres: dict[str, dict[str, float]] = {}
     instruments: dict[str, dict[str, float]] = {}
@@ -295,14 +296,14 @@ def _load_semantic(
             )
         except ValueError:
             continue
-        # TfidfVectorizer по умолчанию даёт L2-нормированные строки
+        # TfidfVectorizer produces L2-normalized rows by default
         for tid, row_idx in zip(texts.keys(), range(matrix.shape[0])):
             tfidf[tid] = matrix[row_idx]
     return genres, instruments, topics, tfidf, moodtags
 
 
 def _tfidf_dist(tfidf: dict[str, object], a: str, b: str) -> float | None:
-    """Косинусное расстояние текстов (только одинаковый корпус = язык)."""
+    """Cosine distance between lyrics (same corpus = language only)."""
     va, vb = tfidf.get(a), tfidf.get(b)
     if va is None or vb is None or va.shape != vb.shape:
         return None
@@ -415,12 +416,13 @@ def similar_tracks_essentia(
 def similar_tracks_v2(
     track_id: str, offset: int = 0, limit: int = 6
 ) -> tuple[list[dict], int] | None:
-    """Взвешенная похожесть по группам фич + теги/тексты/темы.
+    """Weighted similarity across feature groups + tags/lyrics/topics.
 
-    Возвращает (страница результатов, всего), как similar_tracks_essentia.
-    None — недостаточно v2-треков. Группы участвуют в скоре пары только
-    если данные есть у обоих треков; общий скор нормируется на сумму
-    весов доступных групп (треки без текстов не штрафуются).
+    Returns (result page, total), like similar_tracks_essentia.
+    None — not enough v2 tracks. A group contributes to a pair's score
+    only if both tracks have the data; the total score is normalized by
+    the sum of weights of available groups (tracks without lyrics are
+    not penalized).
     """
     weights = {
         "embedding": W_EMBEDDING,
@@ -444,7 +446,7 @@ def similar_tracks_v2(
         ids = [f.track_id for f in usable]
         genres, instruments, topics, tfidf, moodtags = _load_semantic(session, ids)
 
-        # нейро-эмбеддинги, настроения и тональности из колонок фич
+        # neural embeddings, moods, and keys from feature columns
         embedding_map = {
             f.track_id: _parse_embedding(f.embedding) for f in usable
         }
@@ -458,11 +460,11 @@ def similar_tracks_v2(
         }
 
         def pair_distance(other_id: str) -> tuple[float | None, str]:
-            """(общий скор, ближайшая группа); None — нет общих групп."""
+            """(total score, closest group); None — no shared groups."""
             per_group: dict[str, float] = {}
             for g, dim in GROUP_DIMS.items():
-                # L2 по стандартизованным фичам, нормированный на размерность,
-                # чтобы масштаб был сопоставим с косинусными расстояниями 0..2
+                # L2 over standardized features, normalized by dimension
+                # so the scale matches cosine distances of 0..2
                 d = float(np.linalg.norm(groups[g][track_id] - groups[g][other_id]))
                 per_group[g] = d / math.sqrt(dim)
             emb_a = embedding_map.get(track_id)
@@ -491,7 +493,7 @@ def similar_tracks_v2(
             d = _tfidf_dist(tfidf, track_id, other_id)
             if d is not None:
                 per_group["lyrics"] = d
-            # бонус за совпадение тональности (обе уверенны в ней)
+            # bonus for a matching musical key (both tracks confident in it)
             key_a = keys_map.get(track_id)
             key_b = keys_map.get(other_id)
             if (
@@ -540,7 +542,7 @@ def similar_tracks_v2(
 
 
 def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
-    """Ближайшие исполнители из истории по центроидам их фич."""
+    """Nearest artists from history by their feature centroids."""
     with Session(engine) as session:
         features = session.exec(
             select(AudioFeatures).where(AudioFeatures.source == "audio")
@@ -603,10 +605,10 @@ def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
 def similar_tracks(
     track_id: str, offset: int = 0, limit: int = 6
 ) -> tuple[list[dict], int] | None:
-    """Простая похожесть по числовым фичам (запасной вариант без v2).
+    """Simple similarity over numeric features (fallback without v2).
 
-    Возвращает (страница результатов, всего), как similar_tracks_essentia.
-    None — недостаточно данных.
+    Returns (result page, total), like similar_tracks_essentia.
+    None — not enough data.
     """
     with Session(engine) as session:
         features = session.exec(select(AudioFeatures)).all()
@@ -661,7 +663,7 @@ def _throttle() -> None:
 
 def mb_artists_for_tags(tags: list[str], per_tag: int = 8) -> tuple[list[dict], str]:
     if not settings.mb_enabled:
-        return [], "MusicBrainz отключён в настройках (MB_ENABLED=false)"
+        return [], "MusicBrainz disabled in settings (MB_ENABLED=false)"
     artists: list[dict] = []
     now = time.monotonic()
     for tag in tags:
@@ -685,7 +687,7 @@ def mb_artists_for_tags(tags: list[str], per_tag: int = 8) -> tuple[list[dict], 
             resp.raise_for_status()
             payload = resp.json()
         except (httpx.HTTPError, ValueError) as exc:
-            return artists, f"MusicBrainz недоступен: {type(exc).__name__}"
+            return artists, f"MusicBrainz unavailable: {type(exc).__name__}"
         items = []
         for a in payload.get("artists", []):
             name = a.get("name", "")

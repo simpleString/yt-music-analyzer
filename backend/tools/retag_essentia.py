@@ -1,11 +1,12 @@
-"""Пересчёт тегов/настроений/эмбеддингов по кэшированному аудио (Essentia).
+"""Recompute tags/moods/embeddings from cached audio (Essentia).
 
-Обновляет: tags (жанры, стили, инструменты, настроения, moodtags),
-vocal_ratio, embedding, danceability/acousticness/brightness (модели),
-11 колонок mood_*. Аудио не перекачивается — берётся из data/audio.
+Updates: tags (genres, styles, instruments, moods, moodtags),
+vocal_ratio, embedding, danceability/acousticness/brightness (models),
+the 11 mood_* columns. Audio is not re-downloaded — taken from
+data/audio.
 
-Запуск: .venv/bin/python tools/retag_essentia.py [потоки]
-Ошибки треков собираются и выводятся сводкой; exit-код 1 при ошибках.
+Usage: .venv/bin/python tools/retag_essentia.py [threads]
+Track errors are collected and printed as a summary; exit code 1 on errors.
 """
 
 import base64
@@ -40,14 +41,14 @@ def main() -> int:
             )
         ).all()
         ids = [r[0] for r in rows]
-    print(f"треков к пересчёту: {len(ids)}")
+    print(f"tracks to recompute: {len(ids)}")
 
     from essentia.standard import MonoLoader
 
     def work(tid: str):
         wav = Path("data/audio") / f"{tid}.wav"
         if not wav.exists():
-            return tid, FileNotFoundError("нет кэшированного аудио")
+            return tid, FileNotFoundError("no cached audio")
         try:
             audio = MonoLoader(
                 filename=str(wav), sampleRate=16000, resampleQuality=4
@@ -93,12 +94,12 @@ def main() -> int:
                 done += 1
                 if done % 100 == 0:
                     session.commit()
-                    print(f"  {done} пересчитано (ошибок: {errors})…")
+                    print(f"  {done} recomputed ({errors} errors)…")
             session.commit()
 
-    print(f"готово: {done}, ошибок: {errors}")
+    print(f"done: {done}, errors: {errors}")
     if error_list:
-        print("ошибки:")
+        print("errors:")
         for line in error_list:
             print(f"  {line}")
         return 1

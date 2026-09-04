@@ -78,7 +78,7 @@ export function ImportPage() {
   return (
     <div className="flex flex-col gap-3">
       <h1 className="text-lg font-bold text-black">
-        Импорт и обработка
+        Import and processing
       </h1>
 
       {error && (
@@ -89,9 +89,9 @@ export function ImportPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>1. История просмотров (Google Takeout)</CardTitle>
+          <CardTitle>1. Watch history (Google Takeout)</CardTitle>
           <CardDescription>
-            Файл «История просмотров YouTube» в формате JSON
+            "YouTube watch history" file in JSON format
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
@@ -111,7 +111,7 @@ export function ImportPage() {
               className="max-w-sm"
             />
             <Button type="submit" disabled={busy}>
-              Загрузить файл
+              Upload file
             </Button>
           </form>
           <form
@@ -123,7 +123,7 @@ export function ImportPage() {
           >
             <Input
               type="text"
-              placeholder="или путь к файлу на диске"
+              placeholder="or a file path on disk"
               className="max-w-sm"
               value={pathValue}
               onChange={(e) => setPathValue(e.target.value)}
@@ -133,13 +133,13 @@ export function ImportPage() {
               variant="outline"
               disabled={busy || !state?.root_history_exists}
             >
-              Импортировать по пути
+              Import from path
             </Button>
           </form>
           {state?.root_history_exists && (
             <p className="text-muted-foreground text-sm">
-              В корне проекта найден <code>{state.root_json_name}</code> — можно
-              импортировать его.
+              Found <code>{state.root_json_name}</code> in the project root —
+              you can import it directly.
             </p>
           )}
         </CardContent>
@@ -149,11 +149,11 @@ export function ImportPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>2. Конвейер</CardTitle>
+          <CardTitle>2. Pipeline</CardTitle>
           <CardDescription>
-            Порядок: импорт → фильтр → аудио-анализ → кластеризация.
+            Order: import → filter → audio analysis → clustering.
             {!state?.has_api_key &&
-              " YouTube API-ключ не задан — фильтр работает на эвристиках (header «YouTube Музыка», VEVO/-Topic каналы, паттерны названий)."}
+              " No YouTube API key set — the filter relies on heuristics (\"YouTube Music\" header, VEVO/-Topic channels, title patterns)."}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-1.5">
@@ -161,28 +161,28 @@ export function ImportPage() {
             disabled={busy || busyKinds.has("filter")}
             onClick={() => pipeline.mutate("filter")}
           >
-            Фильтр музыки
+            Music filter
           </Button>
           <Button
             disabled={busy || busyKinds.has("audio")}
             onClick={() => pipeline.mutate("audio")}
           >
-            Аудио-анализ{" "}
+            Audio analysis{" "}
             {state?.audio_limit
-              ? `(топ ${state.audio_limit})`
-              : "(все треки)"}
+              ? `(top ${state.audio_limit})`
+              : "(all tracks)"}
           </Button>
           <Button
             disabled={busy || busyKinds.has("clusters")}
             onClick={() => pipeline.mutate("clusters")}
           >
-            Кластеризация → плейлисты
+            Clustering → playlists
           </Button>
           <Button
             disabled={busy || busyKinds.has("lyrics")}
             onClick={() => pipeline.mutate("lyrics")}
           >
-            Тексты песен
+            Lyrics
           </Button>
         </CardContent>
       </Card>

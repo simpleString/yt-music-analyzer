@@ -4,10 +4,10 @@ import { NavLink, Outlet } from "react-router-dom"
 import { useStateQuery } from "@/lib/api"
 
 const NAV = [
-  { to: "/", label: "Главная", end: true },
-  { to: "/dashboard", label: "Дашборд" },
-  { to: "/import", label: "Импорт" },
-  { to: "/settings", label: "Настройки" },
+  { to: "/", label: "Home", end: true },
+  { to: "/dashboard", label: "Dashboard" },
+  { to: "/import", label: "Import" },
+  { to: "/settings", label: "Settings" },
 ]
 
 export function Layout() {
@@ -45,7 +45,7 @@ export function Layout() {
                 yt-music-analyzer!
               </a>
               <span className="text-xs text-[#666666]">
-                — музыкальная библиотека
+                — music library
               </span>
             </div>
             <nav className="mt-0.5 flex flex-wrap items-center justify-center gap-0 text-sm">
@@ -68,8 +68,8 @@ export function Layout() {
             </nav>
             {totals && (
               <div className="mt-0.5 text-xs text-[#666666]">
-                треков: {totals.tracks_total} · музыка: {totals.music_tracks} ·
-                проанализировано: {totals.analyzed}
+                tracks: {totals.tracks_total} · music: {totals.music_tracks} ·
+                analyzed: {totals.analyzed}
               </div>
             )}
             <hr className="mt-1.5 border-t border-[#cccccc] z-50" />

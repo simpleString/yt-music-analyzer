@@ -1,25 +1,25 @@
-"""Тегирование треков моделями Essentia (Discogs-EffNet + головы).
+"""Track tagging with Essentia models (Discogs-EffNet + heads).
 
-Архитектура:
-- Discogs-EffNet (TensorflowPredictEffnetDiscogs): два выхода —
-  PartitionedCall:0 = активации 400 стилей Discogs (жанры),
-  PartitionedCall:1 = эмбеддинги 1280 (вход для голов)
-- Головы на эмбеддингах (TensorflowPredict2D):
-  voice_instrumental — вокал/инструментал (калиброванная вероятность),
-  mtg_jamendo_instrument — 40 инструментальных классов,
-  mtg_jamendo_moodtheme — 56 mood/theme тегов (сырые теги + 4 настроения),
-  danceability — танцевальность,
-  mood_happy/sad/relaxed/aggressive/electronic/acoustic/party — настроения,
-  nsynth_bright_dark — яркость/темнота звука.
+Architecture:
+- Discogs-EffNet (TensorflowPredictEffnetDiscogs): two outputs —
+  PartitionedCall:0 = activations of 400 Discogs styles (genres),
+  PartitionedCall:1 = 1280 embeddings (input for the heads)
+- Heads on embeddings (TensorflowPredict2D):
+  voice_instrumental — vocal/instrumental (calibrated probability),
+  mtg_jamendo_instrument — 40 instrument classes,
+  mtg_jamendo_moodtheme — 56 mood/theme tags (raw tags + 4 moods),
+  danceability — danceability,
+  mood_happy/sad/relaxed/aggressive/electronic/acoustic/party — moods,
+  nsynth_bright_dark — brightness/darkness of sound.
 
-ensure_models() скачивает отсутствующие .pb/.json с essentia.upf.edu;
-отсутствие модели — ошибка (fallback-эвристик нет).
+ensure_models() downloads missing .pb/.json from essentia.upf.edu;
+a missing model is an error (no fallback heuristics).
 
-Формат результата analyze():
-{"genres": [{name, score}] (топ-3),
- "styles": {style: score} (топ-20, ≥0.02),
- "instruments": [{name, score}] (все ≥0.05),
- "moods": {mood_*: 0..1} (11: 7 модельных + 4 moodtheme),
+analyze() result format:
+{"genres": [{name, score}] (top-3),
+ "styles": {style: score} (top-20, ≥0.02),
+ "instruments": [{name, score}] (all ≥0.05),
+ "moods": {mood_*: 0..1} (11: 7 model heads + 4 moodtheme),
  "moodtags": {tag: score} (≥0.05),
  "vocal_ratio": 0..1,
  "embedding": base64(float16[1280])}
@@ -35,7 +35,7 @@ import numpy as np
 
 from app.config import settings
 
-# глушим INFO/WARNING-спам TensorFlow про CUDA-перебор (до загрузки TF)
+# silence TensorFlow INFO/WARNING spam about CUDA probing (before TF import)
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 import essentia
@@ -46,7 +46,7 @@ MODELS_DIR = settings.data_dir / "models"
 DISCOGS_PB = "discogs-effnet-bs64-1"
 ZOO_BASE = "https://essentia.upf.edu/models/classification-heads"
 
-# голова → каталог в зоопарке (имя файла = {task}-discogs-effnet-1)
+# head → catalog in the model zoo (file name = {task}-discogs-effnet-1)
 HEADS = [
     "voice_instrumental",
     "mtg_jamendo_instrument",
@@ -62,14 +62,14 @@ HEADS = [
     "nsynth_bright_dark",
 ]
 
-# порог отсечения слабых тегов
+# score thresholds for weak tags
 GENRE_MIN_SCORE = 0.05
 INSTRUMENT_MIN_SCORE = 0.05
 STYLE_MIN_SCORE = 0.02
 MOODTAG_MIN_SCORE = 0.05
 STYLES_TOP_N = 20
 
-# настроения из выделенных модельных голов (прямые вероятности)
+# moods from dedicated model heads (direct probabilities)
 MODEL_MOODS = [
     "mood_happy",
     "mood_sad",
@@ -80,8 +80,8 @@ MODEL_MOODS = [
     "mood_party",
 ]
 
-# настроения из moodtheme-тегов (выделенных моделей нет): средняя
-# вероятность тегов группы — абсолютная интенсивность 0..1
+# moods from moodtheme tags (no dedicated models): the mean probability
+# of the group's tags — absolute intensity 0..1
 THEME_MOODS = {
     "mood_epic": (
         "epic", "dramatic", "powerful", "action", "trailer", "adventure",
@@ -94,7 +94,7 @@ THEME_MOODS = {
     ),
 }
 
-# человекочитаемые имена инструментов jamendo
+# human-readable jamendo instrument names
 INSTRUMENT_NAMES = {
     "accordion": "Accordion", "acousticbassguitar": "Acoustic bass guitar",
     "acousticguitar": "Acoustic guitar", "bass": "Bass", "beat": "Beat",
@@ -118,7 +118,7 @@ _dl_lock = threading.Lock()
 
 
 def _doh_resolve(host: str) -> str | None:
-    """Резолв через DNS-over-HTTPS (локальный DNS может не знать домен)."""
+    """Resolve via DNS-over-HTTPS (local DNS may not know the domain)."""
     try:
         import httpx
 
@@ -134,7 +134,7 @@ def _doh_resolve(host: str) -> str | None:
 
 
 def download_model_file(url: str, dest: Path) -> None:
-    """Скачивает файл модели; при проблемах DNS — повтор через DoH-IP."""
+    """Downloads a model file; on DNS problems — retry via a DoH-resolved IP."""
     import httpx
     import socket
 
@@ -148,7 +148,7 @@ def download_model_file(url: str, dest: Path) -> None:
             ip = _doh_resolve(host)
             if not ip:
                 raise RuntimeError(
-                    f"essentia: {url} недоступен (DNS и DoH не сработали)"
+                    f"essentia: {url} unreachable (both DNS and DoH failed)"
                 )
             orig = socket.getaddrinfo
 
@@ -161,7 +161,7 @@ def download_model_file(url: str, dest: Path) -> None:
                 resp.raise_for_status()
             except httpx.HTTPError as exc:
                 raise RuntimeError(
-                    f"essentia: не удалось скачать {url}: "
+                    f"essentia: failed to download {url}: "
                     f"{type(exc).__name__}"
                 ) from exc
             finally:
@@ -170,10 +170,10 @@ def download_model_file(url: str, dest: Path) -> None:
 
 
 def ensure_models(progress_cb=None, should_stop=None) -> None:
-    """Скачивает отсутствующие backbone и головы; ошибка — исключение.
+    """Downloads missing backbone and heads; raises on failure.
 
-    progress_cb(сообщение) — отчёт о ходе; should_stop() — проверка отмены
-    (между файлами загрузка прекращается, недокачанные остаются на след. раз).
+    progress_cb(message) — progress report; should_stop() — cancellation
+    check (stops between files; partially downloaded files resume next time).
     """
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     wanted = [(DISCOGS_PB, DISCOGS_PB)] + [
@@ -188,12 +188,12 @@ def ensure_models(progress_cb=None, should_stop=None) -> None:
                 continue
             url = f"{ZOO_BASE}/{task}/{base}{ext}"
             if progress_cb is not None:
-                progress_cb(f"скачивание модели {base}{ext}")
+                progress_cb(f"downloading model {base}{ext}")
             download_model_file(url, path)
 
 
 def _positive_class(classes: list[str]) -> int:
-    """Индекс «положительного» класса (не not_*/non_*)."""
+    """Index of the "positive" class (not not_*/non_*)."""
     for i, c in enumerate(classes):
         low = c.lower()
         if not low.startswith(("not_", "non_", "un")) and low not in (
@@ -204,7 +204,7 @@ def _positive_class(classes: list[str]) -> int:
 
 
 def _algorithms() -> dict:
-    """Тред-локальные инстансы (инференс не потокобезопасен)."""
+    """Thread-local instances (inference is not thread-safe)."""
     if getattr(_local, "algos", None) is not None:
         return _local.algos
     from essentia.standard import TensorflowPredict2D, TensorflowPredictEffnetDiscogs
@@ -228,7 +228,7 @@ def _algorithms() -> dict:
             return head(name)
         except Exception as exc:
             raise RuntimeError(
-                f"essentia: голова {name} не загрузилась: "
+                f"essentia: head {name} failed to load: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
 
@@ -253,20 +253,20 @@ def _algorithms() -> dict:
 
 
 def prettify_style(style: str) -> str:
-    """«Electronic---House» → «Electronic · House»."""
+    """\"Electronic---House\" → \"Electronic · House\"."""
     return " · ".join(p.strip() for p in style.split("---") if p.strip())
 
 
 def analyze(y16: np.ndarray) -> dict:
-    """Полный тег-пакет трека по сигналу 16 кГц (моно, float).
+    """Full tag pack for a 16 kHz signal (mono, float).
 
-    Любая ошибка модели/инференса пробрасывается выше — тихих
-    заглушек нет.
+    Any model/inference error propagates up — there are no silent
+    fallbacks.
     """
     a = _algorithms()
     audio = np.ascontiguousarray(y16, dtype=np.float32)
 
-    emb_raw = np.asarray(a["emb"](audio))  # (кадры, 1280)
+    emb_raw = np.asarray(a["emb"](audio))  # (frames, 1280)
     embeddings = emb_raw if emb_raw.ndim == 2 else emb_raw[None, :]
     pooled = embeddings.mean(axis=0)
     activations = np.asarray(a["act"](audio)).mean(axis=0)

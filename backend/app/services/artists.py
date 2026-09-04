@@ -13,10 +13,10 @@ _COMPILED = [(re.compile(p + r"\s*$", re.IGNORECASE), "") for p in _SUFFIXES]
 
 
 def normalize_artist(channel: str | None) -> str:
-    """Каноническое имя исполнителя из названия канала.
+    """Canonical artist name derived from the channel title.
 
-    Убирает типовые суффиксы в конце ("- Topic", "VEVO", "- Official" и т.п.),
-    схлопывает лишние пробелы. Регистр сохраняется как в оригинале.
+    Strips common trailing suffixes ("- Topic", "VEVO", "- Official",
+    etc.) and collapses extra whitespace. Case is preserved as-is.
     """
     name = (channel or "").strip()
     for rx, repl in _COMPILED:

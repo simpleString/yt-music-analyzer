@@ -59,6 +59,8 @@ def run_import(
                 if track.channel:
                     track.artist_canonical = normalize_artist(track.channel)
                 track.header = e.header
+                # data comparison: matches the Russian-language header in
+                # a YouTube Takeout export ("YouTube Музыка" = "YouTube Music")
                 if e.header == "YouTube Музыка" and track.is_music is None:
                     track.is_music = True
                     track.music_reason = "yt-music-app"
@@ -69,15 +71,16 @@ def run_import(
                 if len(new_listens) >= BATCH:
                     session.add_all(new_listens)
                     session.commit()
-                    # освобождаем identity map: без этого все Listen/Track
-                    # копятся в памяти сессии до конца импорта (утечка → OOM)
+                    # free the identity map: otherwise all Listen/Track
+                    # objects pile up in the session until the end of the
+                    # import (memory leak → OOM)
                     session.expunge_all()
                     new_listens = []
                     if jobs.should_stop("import", stop):
                         break
             if jobs.should_stop("import", stop):
                 jobs.stop_job(
-                    "import", detail="остановлено пользователем (частичный импорт)"
+                    "import", detail="stopped by user (partial import)"
                 )
                 return
 
@@ -100,8 +103,8 @@ def run_import(
         jobs.finish_job(
             "import",
             detail=(
-                f"{len(unique)} записей истории, {len(added)} уникальных видео; "
-                f"в БД: {n_tracks} треков, {n_listens} прослушиваний"
+                f"{len(unique)} history entries, {len(added)} unique videos; "
+                f"in DB: {n_tracks} tracks, {n_listens} listens"
             ),
         )
     except Exception as exc:  # noqa: BLE001

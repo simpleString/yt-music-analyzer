@@ -47,14 +47,14 @@ class AudioFeatures(SQLModel, table=True):
     mood_atmospheric: float = 0.125
     key: str = ""
     mode_conf: float = 0.5
-    # фичи v2 (feat_version=2): json-массивы и скаляры
+    # v2 features (feat_version=2): json arrays and scalars
     mfcc: str = ""
     chroma: str = ""
     contrast: str = ""
     dynamics: float | None = None
     loudness: float | None = None
     percussive: float | None = None
-    # фичи v3 (Essentia): теги json и доля вокала
+    # v3 features (Essentia): tags json and vocal ratio
     tags: str = ""
     vocal_ratio: float | None = None
     embedding: str = ""

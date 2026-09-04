@@ -27,17 +27,17 @@ MOOD_COLS = [
 ]
 
 CLUSTER_NAMES = {
-    "mood_happy": "Весёлое",
-    "mood_aggressive": "Энергичное",
-    "mood_relaxed": "Спокойное",
-    "mood_sad": "Меланхоличное",
-    "mood_electronic": "Электронное",
-    "mood_acoustic": "Акустическое",
-    "mood_party": "Праздничное",
-    "mood_epic": "Эпичное",
-    "mood_dark": "Тёмное",
-    "mood_romantic": "Романтичное",
-    "mood_atmospheric": "Атмосферное",
+    "mood_happy": "Happy",
+    "mood_aggressive": "Energetic",
+    "mood_relaxed": "Calm",
+    "mood_sad": "Melancholic",
+    "mood_electronic": "Electronic",
+    "mood_acoustic": "Acoustic",
+    "mood_party": "Party",
+    "mood_epic": "Epic",
+    "mood_dark": "Dark",
+    "mood_romantic": "Romantic",
+    "mood_atmospheric": "Atmospheric",
 }
 MOOD_KEYS = list(CLUSTER_NAMES)
 
@@ -60,10 +60,10 @@ def _rankify(values: np.ndarray) -> np.ndarray:
 
 
 def compute_moods(session: Session, features: list[AudioFeatures]) -> None:
-    """8 настроений из тегов Essentia (mtg_jamendo_moodtheme).
+    """8 moods from Essentia tags (mtg_jamendo_moodtheme).
 
-    Скоры уже в 0..1 с доминантой = 1 (нормировка в essentia_tags).
-    Для треков без тегов остаётся равномерный дефолт 0.125.
+    Scores are already 0..1 with the dominant mood = 1 (normalized
+    in essentia_tags). Tracks without tags keep the uniform default 0.125.
     """
     audio = [f for f in features if f.source == "audio"]
     if len(audio) < 2:
@@ -101,7 +101,7 @@ def auto_k(n: int) -> int:
 
 
 def _weighted_matrix(groups: dict, ids: list[str]) -> np.ndarray:
-    """Взвешенная матрица из групп: блок × √веса (евклидова метрика)."""
+    """Weighted matrix from groups: block × √weight (euclidean metric)."""
     blocks = []
     for g, w in GROUP_WEIGHTS.items():
         block = np.array([groups[g][i] for i in ids])
@@ -117,8 +117,8 @@ def run_clustering(stop: threading.Event | None = None) -> None:
         from app.config import settings as cfg
 
         with Session(engine) as session:
-            # только реально проанализированные треки; предварительные
-            # оценки по метаданным не участвуют и удаляются
+            # only tracks actually analyzed; preliminary
+            # metadata-based estimates are excluded and deleted
             session.execute(
                 text("DELETE FROM audio_features WHERE source = 'meta'")
             )
@@ -132,7 +132,7 @@ def run_clustering(stop: threading.Event | None = None) -> None:
                 session.commit()
                 jobs.finish_job(
                     "clusters",
-                    "нет треков с аудио-анализом — запустите «Аудио-анализ»",
+                    "no tracks with audio analysis — run \"Audio analysis\"",
                 )
                 return
 
@@ -142,7 +142,7 @@ def run_clustering(stop: threading.Event | None = None) -> None:
                 select(AudioFeatures).where(AudioFeatures.source == "audio")
             ).all()
 
-            # k-means на взвешенном векторе v2 (тембр/ритм/гармония/макро)
+            # k-means on the weighted v2 vector (timbre/rhythm/harmony/macro)
             groups, usable = _v2_matrix(session, features, smooth=False)
             if len(usable) < 2:
                 session.execute(text("UPDATE track SET cluster_id = NULL"))
@@ -150,7 +150,7 @@ def run_clustering(stop: threading.Event | None = None) -> None:
                 session.commit()
                 jobs.finish_job(
                     "clusters",
-                    f"{n} треков, но недостаточно v2-фич для кластеризации",
+                    f"{n} tracks, but not enough v2 features for clustering",
                 )
                 return
             ids = list(groups["timbre"].keys())
@@ -167,7 +167,7 @@ def run_clustering(stop: threading.Event | None = None) -> None:
                 session.execute(text("UPDATE track SET cluster_id = NULL"))
                 session.execute(text("DELETE FROM cluster"))
                 session.commit()
-                jobs.stop_job("clusters", "остановлено пользователем")
+                jobs.stop_job("clusters", "stopped by user")
                 return
 
             session.execute(text("UPDATE track SET cluster_id = NULL"))
@@ -190,17 +190,25 @@ def run_clustering(stop: threading.Event | None = None) -> None:
                 dominant = MOOD_KEYS[int(np.argmax(mean_mood))]
                 name = CLUSTER_NAMES[dominant]
                 if name in names_used:
+                    # Disambiguate without numbers: tempo word, then the
+                    # next-dominant moods, e.g. "Calm · fast · Dark".
                     with_tempo = [r.tempo for r in rows if r.tempo > 0]
                     if with_tempo:
                         avg = sum(with_tempo) / len(with_tempo)
-                        base = f"{name} · {'быстрое' if avg >= 120 else 'медленное'}"
+                        tword = "fast" if avg >= 120 else "slow"
                     else:
-                        base = f"{name} · часть"
-                    name = base
-                    suffix = 2
-                    while name in names_used:
-                        name = f"{base} {suffix}"
-                        suffix += 1
+                        tword = "part"
+                    name = f"{name} · {tword}"
+                    if name in names_used:
+                        order = np.argsort(-mean_mood)
+                        for mi in order[1:]:
+                            extra = CLUSTER_NAMES[MOOD_KEYS[int(mi)]]
+                            cand = f"{name} · {extra}"
+                            if cand not in names_used:
+                                name = cand
+                                break
+                        else:
+                            name = f"{name} · mix"
                 names_used.add(name)
 
                 cluster = Cluster(
@@ -229,8 +237,8 @@ def run_clustering(stop: threading.Event | None = None) -> None:
         jobs.finish_job(
             "clusters",
             detail=(
-                f"{n_usable} треков с фичами v2 разбито на {k} кластеров "
-                f"по звуковому сходству (тембр/ритм/гармония)"
+                f"{n_usable} tracks with v2 features split into {k} clusters "
+                f"by sound similarity (timbre/rhythm/harmony)"
             ),
         )
     except Exception as exc:  # noqa: BLE001

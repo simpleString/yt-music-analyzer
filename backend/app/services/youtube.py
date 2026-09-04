@@ -33,7 +33,7 @@ def quota_left(session: Session) -> int:
 
 
 def fetch_videos_details(video_ids: list[str]) -> dict[str, dict]:
-    """videos.list батчами по 50 ID. Возвращает {video_id: {duration, category_id, channel, title}}."""
+    """videos.list in batches of 50 IDs. Returns {video_id: {duration, category_id, channel, title}}."""
     result: dict[str, dict] = {}
     if not has_api_key():
         return result

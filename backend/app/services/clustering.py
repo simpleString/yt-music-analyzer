@@ -4,13 +4,14 @@ import threading
 import numpy as np
 from sqlalchemy import text
 from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 from sqlmodel import Session, select
 
 from app.db import engine
 from app.models import AudioFeatures, Cluster, Track
 from app.services import jobs
-from app.services.recommend import _v2_matrix
+from app.services.recommend import _parse_embedding, _v2_matrix
 
 MOOD_COLS = [
     "mood_happy",
@@ -109,6 +110,22 @@ def _weighted_matrix(groups: dict, ids: list[str]) -> np.ndarray:
     return np.hstack(blocks)
 
 
+def _embedding_matrix(features: list[AudioFeatures]) -> tuple[list[str], np.ndarray]:
+    """L2-normalized Discogs-EffNet vectors: euclidean ≈ cosine similarity."""
+    ids: list[str] = []
+    vecs: list[np.ndarray] = []
+    for f in features:
+        v = _parse_embedding(f.embedding)
+        if v is None:
+            continue
+        ids.append(f.track_id)
+        vecs.append(v)
+    X = np.vstack(vecs)
+    norms = np.linalg.norm(X, axis=1, keepdims=True)
+    X = X / np.maximum(norms, 1e-9)
+    return ids, X
+
+
 def run_clustering(stop: threading.Event | None = None) -> None:
     try:
         if not jobs.start_job("clusters"):
@@ -142,19 +159,33 @@ def run_clustering(stop: threading.Event | None = None) -> None:
                 select(AudioFeatures).where(AudioFeatures.source == "audio")
             ).all()
 
-            # k-means on the weighted v2 vector (timbre/rhythm/harmony/macro)
-            groups, usable = _v2_matrix(session, features, smooth=False)
-            if len(usable) < 2:
-                session.execute(text("UPDATE track SET cluster_id = NULL"))
-                session.execute(text("DELETE FROM cluster"))
-                session.commit()
-                jobs.finish_job(
-                    "clusters",
-                    f"{n} tracks, but not enough v2 features for clustering",
-                )
-                return
-            ids = list(groups["timbre"].keys())
-            X = _weighted_matrix(groups, ids)
+            if cfg.cluster_use_embedding:
+                ids, X = _embedding_matrix(features)
+                space = "embedding"
+                if len(ids) < 2:
+                    session.execute(text("UPDATE track SET cluster_id = NULL"))
+                    session.execute(text("DELETE FROM cluster"))
+                    session.commit()
+                    jobs.finish_job(
+                        "clusters",
+                        f"{n} tracks, but not enough embeddings for clustering",
+                    )
+                    return
+            else:
+                space = "v2"
+                # k-means on the weighted v2 vector (timbre/rhythm/harmony/macro)
+                groups, usable = _v2_matrix(session, features, smooth=False)
+                if len(usable) < 2:
+                    session.execute(text("UPDATE track SET cluster_id = NULL"))
+                    session.execute(text("DELETE FROM cluster"))
+                    session.commit()
+                    jobs.finish_job(
+                        "clusters",
+                        f"{n} tracks, but not enough v2 features for clustering",
+                    )
+                    return
+                ids = list(groups["timbre"].keys())
+                X = _weighted_matrix(groups, ids)
             feat_by_id = {f.track_id: f for f in features}
 
             n_usable = len(ids)
@@ -169,6 +200,12 @@ def run_clustering(stop: threading.Event | None = None) -> None:
                 session.commit()
                 jobs.stop_job("clusters", "stopped by user")
                 return
+
+            sil = float(
+                silhouette_score(
+                    X, labels, sample_size=min(2000, len(ids)), random_state=42
+                )
+            )
 
             session.execute(text("UPDATE track SET cluster_id = NULL"))
             session.execute(text("DELETE FROM cluster"))
@@ -237,8 +274,8 @@ def run_clustering(stop: threading.Event | None = None) -> None:
         jobs.finish_job(
             "clusters",
             detail=(
-                f"{n_usable} tracks with v2 features split into {k} clusters "
-                f"by sound similarity (timbre/rhythm/harmony)"
+                f"{n_usable} tracks split into {k} clusters "
+                f"({space}, silhouette {sil:.3f})"
             ),
         )
     except Exception as exc:  # noqa: BLE001

@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     audio_workers_cached: int = 8
     audio_delete_after: bool = False
     cluster_k: int = 0
+    # cluster in the Discogs-EffNet embedding space (cosine-like) instead
+    # of the weighted v2 blocks (timbre/rhythm/harmony/macro)
+    cluster_use_embedding: bool = False
     mb_user_agent: str = (
         "yt-music-analyzer/1.0 (local personal project; contact: example@example.com)"
     )

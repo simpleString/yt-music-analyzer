@@ -757,6 +757,13 @@ SETTINGS_FIELDS: list[dict] = [
         "hint": "0 — pick automatically.",
     },
     {
+        "key": "cluster_use_embedding",
+        "type": "bool",
+        "label": "Cluster in neural embedding space",
+        "hint": "Use Discogs-EffNet embeddings (1280-d, cosine-like) instead of "
+        "v2 features (timbre/rhythm/harmony). Re-run Clustering to apply.",
+    },
+    {
         "key": "lyrics_limit",
         "type": "int",
         "label": "Lyrics lookup limit per run",

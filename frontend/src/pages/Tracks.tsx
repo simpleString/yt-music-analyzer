@@ -1,31 +1,31 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
-} from "@tanstack/react-query"
-import { useWindowVirtualizer } from "@tanstack/react-virtual"
-import { Link, useNavigate } from "react-router-dom"
-import { Ban, Check, EyeOff } from "lucide-react"
+} from "@tanstack/react-query";
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
+import { Link, useNavigate } from "react-router-dom";
+import { Ban, Check, EyeOff } from "lucide-react";
 
-import { api, type TrackListItem, type TrackSort } from "@/lib/api"
-import { cn } from "@/lib/utils"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { api, type TrackListItem, type TrackSort } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
+} from "@/components/ui/select";
 
 const GRID =
-  "grid grid-cols-[2.25rem_4.25rem_minmax(0,1fr)_10.5rem_4rem_4.5rem_4.5rem_4.5rem_4.5rem_6rem_6rem_4.5rem_5.5rem] items-center gap-1.5 px-1.5"
+  "grid grid-cols-[2.25rem_4.25rem_minmax(0,1fr)_10.5rem_4rem_4.5rem_4.5rem_4.5rem_4.5rem_6rem_6rem_4.5rem_5.5rem] items-center gap-1.5 px-1.5";
 
 const REASON_LABELS: [string, string][] = [
   ["yt-music-app", "played in YouTube Music"],
@@ -39,48 +39,45 @@ const REASON_LABELS: [string, string][] = [
   ["manual-not-music", "manually: channel hidden"],
   ["anti-pattern", "anti-pattern in title"],
   ["no-signal", "no music signals"],
-  ["artist-dash", "\"artist - track\" title format"],
+  ["artist-dash", '"artist - track" title format'],
   ["channel-music", "music channel (voted)"],
   ["channel-not-music", "non-music channel (voted)"],
-]
+];
 
 function reasonLabel(reason: string): string {
-  if (!reason) return "—"
+  if (!reason) return "—";
   for (const [prefix, label] of REASON_LABELS) {
-    if (reason.startsWith(prefix)) return label
+    if (reason.startsWith(prefix)) return label;
   }
-  return reason
+  return reason;
 }
 
 function formatDuration(seconds: number | null): string {
-  if (!seconds) return "—"
-  const m = Math.floor(seconds / 60)
-  const s = Math.round(seconds % 60)
-  return `${m}:${String(s).padStart(2, "0")}`
+  if (!seconds) return "—";
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 const LANG_OPTIONS = [
   { value: "ru", label: "Russian" },
   { value: "en", label: "English" },
   { value: "cjk", label: "Japanese/Chinese" },
-]
+];
 
 function techTooltip(t: TrackListItem): string {
-  const parts = [`classification: ${reasonLabel(t.music_reason)}`]
+  const parts = [`classification: ${reasonLabel(t.music_reason)}`];
   if (t.tempo != null) {
-    parts.push(`BPM: ${Math.round(t.tempo ?? 0)}`)
-    parts.push(`brightness: ${(t.brightness ?? 0).toFixed(2)}`)
-    if (t.key) parts.push(`key: ${t.key}`)
-    if (t.loudness != null)
-      parts.push(`loudness: ${t.loudness.toFixed(1)} dB`)
-    if (t.dynamics != null)
-      parts.push(`dynamics: ${t.dynamics.toFixed(2)}`)
+    parts.push(`BPM: ${Math.round(t.tempo ?? 0)}`);
+    parts.push(`brightness: ${(t.brightness ?? 0).toFixed(2)}`);
+    if (t.key) parts.push(`key: ${t.key}`);
+    if (t.loudness != null) parts.push(`loudness: ${t.loudness.toFixed(1)} dB`);
+    if (t.dynamics != null) parts.push(`dynamics: ${t.dynamics.toFixed(2)}`);
     if (t.vocal_ratio != null)
-      parts.push(`vocals: ${Math.round(t.vocal_ratio * 100)}%`)
-    if (t.genres?.length)
-      parts.push(`genres: ${t.genres.join(", ")}`)
+      parts.push(`vocals: ${Math.round(t.vocal_ratio * 100)}%`);
+    if (t.genres?.length) parts.push(`genres: ${t.genres.join(", ")}`);
     if (t.instruments?.length)
-      parts.push(`instruments: ${t.instruments.join(", ")}`)
+      parts.push(`instruments: ${t.instruments.join(", ")}`);
     const moods = [
       `happiness ${Math.round((t.mood_happy ?? 0) * 100)}%`,
       `sadness ${Math.round((t.mood_sad ?? 0) * 100)}%`,
@@ -93,14 +90,14 @@ function techTooltip(t: TrackListItem): string {
       `darkness ${Math.round((t.mood_dark ?? 0) * 100)}%`,
       `romance ${Math.round((t.mood_romantic ?? 0) * 100)}%`,
       `atmospheric ${Math.round((t.mood_atmospheric ?? 0) * 100)}%`,
-    ]
-    parts.push(`mood: ${moods.join(", ")}`)
+    ];
+    parts.push(`mood: ${moods.join(", ")}`);
     parts.push(
-      `feature source: ${t.features_source === "audio" ? "audio" : "metadata"}`
-    )
+      `feature source: ${t.features_source === "audio" ? "audio" : "metadata"}`,
+    );
   }
-  if (t.language) parts.push(`lyrics language: ${t.language}`)
-  return parts.join("\n")
+  if (t.language) parts.push(`lyrics language: ${t.language}`);
+  return parts.join("\n");
 }
 
 const SORT_COLUMNS: { key: TrackSort; label: string; align?: "right" }[] = [
@@ -112,50 +109,50 @@ const SORT_COLUMNS: { key: TrackSort; label: string; align?: "right" }[] = [
   { key: "first_listen", label: "first", align: "right" },
   { key: "last_listen", label: "last", align: "right" },
   { key: "duration", label: "length", align: "right" },
-]
+];
 
 export function Tracks() {
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const [input, setInput] = useState("")
-  const [q, setQ] = useState("")
-  const [sort, setSort] = useState<TrackSort>("play_count")
-  const [order, setOrder] = useState<"asc" | "desc">("desc")
-  const [clusterId, setClusterId] = useState<number | null>(null)
-  const [hidden, setHidden] = useState(false)
-  const [genre, setGenre] = useState("")
-  const [language, setLanguage] = useState("")
-  const [instrumental, setInstrumental] = useState(false)
-  const [showFilters, setShowFilters] = useState(false)
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [input, setInput] = useState("");
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState<TrackSort>("play_count");
+  const [order, setOrder] = useState<"asc" | "desc">("desc");
+  const [clusterId, setClusterId] = useState<number | null>(null);
+  const [hidden, setHidden] = useState(false);
+  const [genre, setGenre] = useState("");
+  const [language, setLanguage] = useState("");
+  const [instrumental, setInstrumental] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
 
-  const applySearch = () => setQ(input.trim())
+  const applySearch = () => setQ(input.trim());
 
   useEffect(() => {
-    const t = setTimeout(() => setQ(input.trim()), 300)
-    return () => clearTimeout(t)
-  }, [input])
+    const t = setTimeout(() => setQ(input.trim()), 300);
+    return () => clearTimeout(t);
+  }, [input]);
 
   const clearFilters = () => {
-    setInput("")
-    setQ("")
-    setClusterId(null)
-    setHidden(false)
-    setGenre("")
-    setLanguage("")
-    setInstrumental(false)
-  }
+    setInput("");
+    setQ("");
+    setClusterId(null);
+    setHidden(false);
+    setGenre("");
+    setLanguage("");
+    setInstrumental(false);
+  };
 
   const { data: clusters } = useQuery({
     queryKey: ["clusters"],
     queryFn: api.clusters,
-  })
+  });
   const { data: genres } = useQuery({
     queryKey: ["genres"],
     queryFn: api.genres,
     staleTime: 5 * 60 * 1000,
-  })
+  });
   const genreLabel = (name: string): string =>
-    genres?.find((g) => g.name === name)?.name_ru ?? name
+    genres?.find((g) => g.name === name)?.name_ru ?? name;
 
   const {
     data,
@@ -165,7 +162,17 @@ export function Tracks() {
     fetchNextPage,
     hasNextPage,
   } = useInfiniteQuery({
-    queryKey: ["tracks", q, sort, order, clusterId, hidden, genre, language, instrumental],
+    queryKey: [
+      "tracks",
+      q,
+      sort,
+      order,
+      clusterId,
+      hidden,
+      genre,
+      language,
+      instrumental,
+    ],
     queryFn: ({ pageParam }) =>
       api.tracks({
         q,
@@ -180,97 +187,94 @@ export function Tracks() {
       }),
     initialPageParam: 1,
     getNextPageParam: (last) => {
-      const lastPageNum = Math.ceil(last.total / last.per_page)
-      return last.page < lastPageNum ? last.page + 1 : undefined
+      const lastPageNum = Math.ceil(last.total / last.per_page);
+      return last.page < lastPageNum ? last.page + 1 : undefined;
     },
     placeholderData: keepPreviousData,
-  })
+  });
 
   const classify = useMutation({
-    mutationFn: ({
-      videoId,
-      isMusic,
-    }: {
-      videoId: string
-      isMusic: boolean
-    }) => api.classifyTrack(videoId, isMusic),
+    mutationFn: ({ videoId, isMusic }: { videoId: string; isMusic: boolean }) =>
+      api.classifyTrack(videoId, isMusic),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tracks"] })
-      queryClient.invalidateQueries({ queryKey: ["state"] })
+      queryClient.invalidateQueries({ queryKey: ["tracks"] });
+      queryClient.invalidateQueries({ queryKey: ["state"] });
     },
-  })
+  });
 
   const hideChannel = useMutation({
     mutationFn: (channel: string) => api.hideChannel(channel),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tracks"] })
-      queryClient.invalidateQueries({ queryKey: ["state"] })
+      queryClient.invalidateQueries({ queryKey: ["tracks"] });
+      queryClient.invalidateQueries({ queryKey: ["state"] });
     },
-  })
+  });
 
   const rows = useMemo(
     () => data?.pages.flatMap((p) => p.tracks) ?? [],
-    [data]
-  )
-  const total = data?.pages[0]?.total ?? 0
+    [data],
+  );
+  const total = data?.pages[0]?.total ?? 0;
 
-  const controlsRef = useRef<HTMLDivElement>(null)
-  const listRef = useRef<HTMLDivElement>(null)
-  const [scrollMargin, setScrollMargin] = useState(0)
+  const controlsRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
   const virtualizer = useWindowVirtualizer({
     count: rows.length,
     estimateSize: () => 60,
     overscan: 10,
     scrollMargin,
-  })
+  });
 
   useEffect(() => {
-    window.scrollTo({ top: 0 })
-  }, [q, sort, order, clusterId, hidden, genre, language, instrumental])
+    window.scrollTo({ top: 0 });
+  }, [q, sort, order, clusterId, hidden, genre, language, instrumental]);
 
   useEffect(() => {
-    const el = controlsRef.current
-    if (!el) return
+    const el = controlsRef.current;
+    if (!el) return;
     const measure = () => {
       document.documentElement.style.setProperty(
         "--controls-h",
-        `${el.offsetHeight}px`
-      )
-      const list = listRef.current
+        `${el.offsetHeight}px`,
+      );
+      const list = listRef.current;
       if (list) {
-        setScrollMargin(list.getBoundingClientRect().top + window.scrollY)
+        setScrollMargin(list.getBoundingClientRect().top + window.scrollY);
       }
-    }
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
-  const sentinelRef = useRef<HTMLDivElement>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const el = sentinelRef.current
-    if (!el) return
+    const el = sentinelRef.current;
+    if (!el) return;
     const obs = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting && hasNextPage && !isFetchingNextPage) {
-          fetchNextPage()
+          fetchNextPage();
         }
       },
-      { rootMargin: "800px 0px" }
-    )
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage, rows.length])
+      { rootMargin: "800px 0px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, rows.length]);
 
   const toggleSort = (key: TrackSort) => {
     if (sort === key) {
-      setOrder((o) => (o === "desc" ? "asc" : "desc"))
+      setOrder((o) => (o === "desc" ? "asc" : "desc"));
     } else {
-      setSort(key)
-      setOrder("desc")
+      setSort(key);
+      setOrder("desc");
     }
-  }
+  };
+
+  console.log(clusterId);
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -284,8 +288,8 @@ export function Tracks() {
         <form
           className="flex w-full items-center justify-center gap-1.5"
           onSubmit={(e) => {
-            e.preventDefault()
-            applySearch()
+            e.preventDefault();
+            applySearch();
           }}
         >
           <Input
@@ -335,7 +339,9 @@ export function Tracks() {
             <div className="flex flex-wrap items-center justify-center gap-1.5">
               <Select
                 value={clusterId != null ? String(clusterId) : "all"}
-                onValueChange={(v) => setClusterId(v === "all" ? null : Number(v))}
+                onValueChange={(v) =>
+                  setClusterId(v === "all" ? null : Number(v))
+                }
               >
                 <SelectTrigger className="w-60">
                   <SelectValue placeholder="All moods" />
@@ -387,8 +393,8 @@ export function Tracks() {
 
         {hidden && (
           <p className="text-muted-foreground text-sm">
-            Tracks marked as "not music". The ✓ button returns a track to
-            the library.
+            Tracks marked as "not music". The ✓ button returns a track to the
+            library.
           </p>
         )}
 
@@ -417,8 +423,7 @@ export function Tracks() {
           <p className="text-muted-foreground text-sm">
             {q ? (
               <>
-                Found: <b className="text-foreground">{total}</b> for "
-                {q}"
+                Found: <b className="text-foreground">{total}</b> for "{q}"
               </>
             ) : (
               <>
@@ -436,7 +441,7 @@ export function Tracks() {
             <div
               className={cn(
                 GRID,
-                "sticky z-10 min-w-[80rem] border-b border-[#999999] bg-[#eeeeee] py-1 text-xs font-bold text-black whitespace-nowrap"
+                "sticky z-10 min-w-[80rem] border-b border-[#999999] bg-[#eeeeee] py-1 text-xs font-bold text-black whitespace-nowrap",
               )}
               style={{
                 top: "calc(var(--header-h, 0px) + var(--controls-h, 0px))",
@@ -453,7 +458,7 @@ export function Tracks() {
                   onClick={() => toggleSort(col.key)}
                   className={cn(
                     "text-[#0000cc] underline flex items-center gap-1",
-                    col.align === "right" && "justify-end"
+                    col.align === "right" && "justify-end",
                   )}
                 >
                   {col.label}
@@ -477,7 +482,7 @@ export function Tracks() {
               }}
             >
               {virtualizer.getVirtualItems().map((vi) => {
-                const t = rows[vi.index]
+                const t = rows[vi.index];
                 return (
                   <div
                     key={t.video_id}
@@ -492,7 +497,7 @@ export function Tracks() {
                     }}
                     className={cn(
                       GRID,
-                      "hover:bg-[#ffffcc] cursor-pointer border-b border-[#e0e0e0]"
+                      "hover:bg-[#ffffcc] cursor-pointer border-b border-[#e0e0e0]",
                     )}
                     title={techTooltip(t)}
                     onClick={(e) => {
@@ -500,8 +505,8 @@ export function Tracks() {
                         e.target instanceof HTMLElement &&
                         (e.target.closest("a") || e.target.closest("button"))
                       )
-                        return
-                      navigate(`/track/${t.video_id}`)
+                        return;
+                      navigate(`/track/${t.video_id}`);
                     }}
                   >
                     <span className="text-muted-foreground tabular-nums">
@@ -559,14 +564,10 @@ export function Tracks() {
                       {t.energy != null ? t.energy.toFixed(2) : "—"}
                     </span>
                     <span className="text-muted-foreground text-right text-sm tabular-nums">
-                      {t.danceability != null
-                        ? t.danceability.toFixed(2)
-                        : "—"}
+                      {t.danceability != null ? t.danceability.toFixed(2) : "—"}
                     </span>
                     <span className="text-muted-foreground text-right text-sm tabular-nums">
-                      {t.acousticness != null
-                        ? t.acousticness.toFixed(2)
-                        : "—"}
+                      {t.acousticness != null ? t.acousticness.toFixed(2) : "—"}
                     </span>
                     <span className="text-right text-sm tabular-nums">
                       {t.play_count}
@@ -620,9 +621,7 @@ export function Tracks() {
                             className="hover:text-[#cc0000] size-7"
                             title={`Hide entire channel "${t.channel}"`}
                             disabled={hideChannel.isPending}
-                            onClick={() =>
-                              hideChannel.mutate(t.channel)
-                            }
+                            onClick={() => hideChannel.mutate(t.channel)}
                           >
                             <EyeOff className="size-4" />
                           </Button>
@@ -630,7 +629,7 @@ export function Tracks() {
                       )}
                     </span>
                   </div>
-                )
+                );
               })}
             </div>
           </div>
@@ -651,5 +650,5 @@ export function Tracks() {
         </>
       )}
     </div>
-  )
+  );
 }

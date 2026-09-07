@@ -114,58 +114,20 @@ INSTRUMENT_NAMES = {
 }
 
 _local = threading.local()
-_dl_lock = threading.Lock()
-
-
-def _doh_resolve(host: str) -> str | None:
-    """Resolve via DNS-over-HTTPS (local DNS may not know the domain)."""
-    try:
-        import httpx
-
-        r = httpx.get(
-            f"https://dns.google/resolve?name={host}&type=A", timeout=10
-        )
-        for ans in r.json().get("Answer", []):
-            if ans.get("type") == 1:
-                return str(ans["data"])
-    except Exception:  # noqa: BLE001
-        return None
-    return None
 
 
 def download_model_file(url: str, dest: Path) -> None:
-    """Downloads a model file; on DNS problems — retry via a DoH-resolved IP."""
+    """Downloads a model file; raises on failure."""
     import httpx
-    import socket
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    host = "essentia.upf.edu"
     try:
         resp = httpx.get(url, timeout=120, follow_redirects=True)
         resp.raise_for_status()
-    except httpx.HTTPError:
-        with _dl_lock:
-            ip = _doh_resolve(host)
-            if not ip:
-                raise RuntimeError(
-                    f"essentia: {url} unreachable (both DNS and DoH failed)"
-                )
-            orig = socket.getaddrinfo
-
-            def patched(h, *args, **kwargs):
-                return orig(ip if h == host else h, *args, **kwargs)
-
-            socket.getaddrinfo = patched
-            try:
-                resp = httpx.get(url, timeout=120, follow_redirects=True)
-                resp.raise_for_status()
-            except httpx.HTTPError as exc:
-                raise RuntimeError(
-                    f"essentia: failed to download {url}: "
-                    f"{type(exc).__name__}"
-                ) from exc
-            finally:
-                socket.getaddrinfo = orig
+    except httpx.HTTPError as exc:
+        raise RuntimeError(
+            f"essentia: failed to download {url}: {type(exc).__name__}"
+        ) from exc
     dest.write_bytes(resp.content)
 
 
@@ -207,7 +169,18 @@ def _algorithms() -> dict:
     """Thread-local instances (inference is not thread-safe)."""
     if getattr(_local, "algos", None) is not None:
         return _local.algos
-    from essentia.standard import TensorflowPredict2D, TensorflowPredictEffnetDiscogs
+    try:
+        from essentia.standard import (
+            TensorflowPredict2D,
+            TensorflowPredictEffnetDiscogs,
+        )
+    except ImportError as exc:
+        raise RuntimeError(
+            "essentia-tensorflow is shadowed by the plain essentia wheel "
+            "(happens on a fresh venv); it is repaired automatically by "
+            "dev.sh/start.sh, or run: uv pip install --reinstall-package "
+            "essentia-tensorflow essentia-tensorflow"
+        ) from exc
 
     ensure_models()
 

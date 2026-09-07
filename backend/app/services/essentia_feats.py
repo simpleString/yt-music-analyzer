@@ -57,8 +57,17 @@ def _algorithms() -> dict:
         DynamicComplexity,
         KeyExtractor,
         RhythmExtractor2013,
-        TensorflowPredictTempoCNN,
     )
+
+    try:
+        from essentia.standard import TensorflowPredictTempoCNN
+    except ImportError as exc:
+        raise RuntimeError(
+            "essentia-tensorflow is shadowed by the plain essentia wheel "
+            "(happens on a fresh venv); it is repaired automatically by "
+            "dev.sh/start.sh, or run: uv pip install --reinstall-package "
+            "essentia-tensorflow essentia-tensorflow"
+        ) from exc
 
     ensure_models()
     _local.a = {
@@ -76,20 +85,29 @@ def extract_rhythm_key(audio44: np.ndarray, y16: np.ndarray) -> dict:
     """Track BPM (multifeature + TempoCNN), key, and dynamics.
 
     audio44 — mono 44.1 kHz; y16 — mono 16 kHz (for TempoCNN).
-    Errors are propagated up with the algorithm name.
+    NaN/Inf samples (broken decodes) are replaced with silence.
+    RhythmExtractor2013 may throw on beatless/noisy material — its vote
+    is skipped then (tempo falls back to TempoCNN + onset
+    autocorrelation); the remaining failures propagate with the
+    algorithm name.
     """
     a = _algorithms()
-    audio44 = np.ascontiguousarray(audio44, dtype=np.float32)
-    y16 = np.ascontiguousarray(y16, dtype=np.float32)
+    audio44 = np.nan_to_num(np.ascontiguousarray(audio44, dtype=np.float32))
+    y16 = np.nan_to_num(np.ascontiguousarray(y16, dtype=np.float32))
 
+    bpm_multi = None
     try:
         bpm = a["rhythm"](audio44)[0]
         bpm_multi = float(np.atleast_1d(bpm)[0])
     except Exception as exc:
-        raise RuntimeError(
-            f"essentia: RhythmExtractor2013 failed: "
-            f"{type(exc).__name__}: {exc}"
-        ) from exc
+        import sys
+
+        print(
+            f"essentia: RhythmExtractor2013 failed "
+            f"({type(exc).__name__}: {exc}); skipping the multi-feature "
+            f"tempo vote",
+            file=sys.stderr,
+        )
 
     try:
         cnn_out = np.atleast_1d(np.asarray(a["tempocnn"](y16)).flatten())

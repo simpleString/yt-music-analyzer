@@ -57,6 +57,8 @@ class AudioFeatures(SQLModel, table=True):
     # v3 features (Essentia): tags json and vocal ratio
     tags: str = ""
     vocal_ratio: float | None = None
+    # whisper verdict ("are there words?"): True/False, None = not checked
+    has_vocals: bool | None = None
     embedding: str = ""
     feat_version: int = 0
     analyzed_at: datetime = Field(default_factory=datetime.utcnow)

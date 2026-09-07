@@ -25,7 +25,6 @@ class Settings(BaseSettings):
     # needed); the bottleneck is CPU: raise to a sensible number of cores
     audio_workers_cached: int = 8
     audio_delete_after: bool = False
-    cluster_k: int = 0
     # cluster in the Discogs-EffNet embedding space (cosine-like) instead
     # of the weighted v2 blocks (timbre/rhythm/harmony/macro)
     cluster_use_embedding: bool = False
@@ -33,10 +32,19 @@ class Settings(BaseSettings):
         "yt-music-analyzer/1.0 (local personal project; contact: example@example.com)"
     )
     mb_enabled: bool = True
-    lyrics_limit: int = 200
-    # vocal ratio threshold: YAMNet gives low absolute probabilities
-    # ("Singing" ~0.004–0.1 for vocal tracks), instrumentals ~0–0.005
+    # lyrics lookup: how many tracks per run, 0 — all eligible
+    lyrics_limit: int = 0
+    # vocal score (voice_instrumental head, fallback: Jamendo "Voice"
+    # instrument) above which a track counts as vocal without a whisper
+    # spot-check; also the fallback for the "instrumental" filter when
+    # the whisper verdict is unknown
     lyrics_min_vocal: float = 0.3
+    # whisper spot-check ("are there words?"): runs when LRCLIB found
+    # nothing and the vocal score is below lyrics_min_vocal
+    whisper_model: str = "base"
+    # recognized words in the fragment for the track to count as vocal
+    whisper_min_words: int = 8
+    whisper_clip_seconds: int = 45
     audio_cookies_from_browser: str = "chrome"
     audio_cookies_keyring: str = "basictext"
 

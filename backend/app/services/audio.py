@@ -196,6 +196,17 @@ def _is_unavailable(unav: dict[str, str], vid: str) -> bool:
         return False
 
 
+def reset_unavailable() -> int:
+    """Forgets the 'marked unavailable' cache so the audio job retries
+    those videos. Returns how many marks were cleared."""
+    unav = _load_unavailable()
+    if not unav:
+        return 0
+    n = len(unav)
+    _save_unavailable({})
+    return n
+
+
 def _classify_dl_error(err: str) -> str:
     low = err.lower()
     if "video unavailable" in low or "this video is not available" in low:
@@ -220,11 +231,12 @@ def download_audio(video_id: str) -> tuple[Path | None, str]:
         "retries": 2,
         "socket_timeout": 30,
         "js_runtimes": {"node": {}},
+        # no player_client pin: the web client returns no formats at all
+        # for some videos (SABR-only experiment) — default clients fall
+        # back to https/dash/hls audio
         "extractor_args": {
             "youtube": {
                 "formats": ["duplicate"],
-                "player_client": ["web"],
-                "webpage_client": "web",
             }
         },
     }
@@ -257,6 +269,11 @@ def _load_audio(path: Path, duration_cap: float | None = None) -> tuple[np.ndarr
         y, sr = librosa.load(str(path), **kwargs)
     except Exception:
         wav = path.with_suffix(".wav")
+        if wav == path:
+            # already a wav that librosa cannot read — broken file, no
+            # point converting in place: re-raise so it gets deleted
+            # and re-downloaded
+            raise
         subprocess.run(
             ["ffmpeg", "-y", "-i", str(path), "-ac", "1", "-ar", str(SR), str(wav)],
             capture_output=True,
@@ -334,18 +351,24 @@ def _resolve_tempo(ek: dict, onset_env: np.ndarray, sr: int) -> float:
     multifeature gets the autocorrelation score). Outside 60–190 —
     octave auto-correction.
     """
-    multi = ek["bpm_multi"]
-    cnn = ek["bpm_cnn"]
-    if multi <= 0 or cnn <= 0:
+    multi = float(ek["bpm_multi"]) if ek.get("bpm_multi") else 0.0
+    cnn = float(ek["bpm_cnn"]) if ek.get("bpm_cnn") else 0.0
+    if multi > 0 and cnn > 0:
+        if abs(multi - cnn) / max(multi, cnn) <= 0.20:
+            bpm = multi
+        else:
+            bpm = (
+                multi
+                if _tempo_conf(multi, onset_env, sr) >= ek["cnn_conf"]
+                else cnn
+            )
+    elif multi > 0 or cnn > 0:
         bpm = multi or cnn
-    elif abs(multi - cnn) / max(multi, cnn) <= 0.20:
-        bpm = multi
     else:
-        bpm = (
-            multi
-            if _tempo_conf(multi, onset_env, sr) >= ek["cnn_conf"]
-            else cnn
-        )
+        # both model votes missing: grid search on the onset envelope
+        grid = np.arange(40.0, 220.0, 0.5)
+        scores = [_tempo_score(float(c), onset_env, sr) for c in grid]
+        bpm = float(grid[int(np.argmax(scores))])
     if not 60.0 <= bpm <= 190.0:
         bpm = _refine_tempo(bpm, onset_env, sr)
     return float(bpm)
@@ -460,6 +483,7 @@ def _analyze_file(video_id: str, path: Path) -> tuple[dict | None, str]:
             "LibsndfileError" in msg
             or "audio too short" in msg
             or "NoBackendError" in msg
+            or "CalledProcessError" in msg
         ):
             for p in settings.audio_dir.glob(f"{video_id}.*"):
                 p.unlink(missing_ok=True)

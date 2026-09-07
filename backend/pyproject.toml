@@ -22,6 +22,8 @@ dependencies = [
     "onnxruntime>=1.29.0",
     "essentia>=2.1b6.dev1438",
     "essentia-tensorflow>=2.1b6.dev1438",
+    "langdetect>=1.0.9",
+    "faster-whisper>=1.1",
 ]
 
 [tool.uv.sources]

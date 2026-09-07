@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 
 import httpx
+from langdetect import DetectorFactory, detect
 from sqlmodel import Session, select
 
 from app.config import settings
@@ -16,6 +17,13 @@ from app.services.topics import extract_topics
 
 LRCLIB_SEARCH = "https://lrclib.net/api/search"
 MIN_MATCH_RATIO = 0.6
+# fuzzy-match ratio high enough to declare "the track has words"
+CONFIRM_RATIO = 0.8
+
+DetectorFactory.seed = 0
+
+# langdetect splits Chinese into zh-cn/zh-tw — store one code
+_LANG_ALIASES = {"zh-cn": "zh", "zh-tw": "zh"}
 
 TITLE_JUNK_RE = re.compile(
     r"[([](official|lyrics?|lyric|audio|video|visualizer|remaster\w*|hd|hq|4k|mv"
@@ -93,16 +101,15 @@ def _artist_from_channel(channel: str) -> str:
 
 
 def detect_language(text: str) -> str:
-    t = (text or "").lower()
-    cyr = len(re.findall(r"[а-яё]", t))
-    lat = len(re.findall(r"[a-z]", t))
-    if cyr > lat and cyr > 10:
-        return "ru"
-    if lat > 10:
-        return "en"
-    if re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", t):
-        return "cjk"
-    return ""
+    """ISO 639-1 language code of the text ('' if unsure)."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    try:
+        code = detect(t)
+    except Exception:
+        return ""
+    return _LANG_ALIASES.get(code, code)
 
 
 def sentiment_score(text: str) -> float:
@@ -135,7 +142,8 @@ def _throttle() -> None:
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-zа-яё0-9 ]", "", (s or "").lower()).strip()
+    """Lowercase and strip punctuation, keeping letters of any alphabet."""
+    return re.sub(r"[^\w\s]+", "", (s or "").lower()).strip()
 
 
 def _lrclib_search(
@@ -149,15 +157,17 @@ def _lrclib_search(
         )
         resp.raise_for_status()
         return resp.json()
-    except (httpx.HTTPError, ValueError):
+    except ValueError:
         return []
+    # httpx.HTTPError propagates: a network outage must not be mistaken
+    # for "lyrics not found" (misses get cached, network errors don't)
 
 
-def _fetch_lyrics(track: Track, client: httpx.Client) -> Lyrics | None:
+def _fetch_lyrics(track: Track, client: httpx.Client) -> tuple[Lyrics | None, float]:
     artist_guess, song = _clean_title(track.title)
     artist = _artist_from_channel(track.channel) or artist_guess
     if not song:
-        return None
+        return None, 0.0
     hits = _lrclib_search(song, artist, client)
     if not hits and artist and artist != artist_guess and artist_guess:
         # the channel may be inaccurate (label, live channel) — try the artist from the title
@@ -169,7 +179,18 @@ def _fetch_lyrics(track: Track, client: httpx.Client) -> Lyrics | None:
             resp = client.get(LRCLIB_SEARCH, params={"track_name": song[:120]})
             resp.raise_for_status()
             hits = resp.json()
-        except (httpx.HTTPError, ValueError):
+        except ValueError:
+            hits = []
+    if not hits:
+        # final fallback: free-form query across all fields
+        _throttle()
+        try:
+            resp = client.get(
+                LRCLIB_SEARCH, params={"q": f"{artist} {song}"[:200]}
+            )
+            resp.raise_for_status()
+            hits = resp.json()
+        except ValueError:
             hits = []
     best, best_ratio = None, 0.0
     target = _norm(f"{artist} {song}")
@@ -187,13 +208,13 @@ def _fetch_lyrics(track: Track, client: httpx.Client) -> Lyrics | None:
             if ratio > best_ratio:
                 best, best_ratio = hit, ratio
     if best is None or best_ratio < MIN_MATCH_RATIO:
-        return None
+        return None, 0.0
     text = best.get("plainLyrics") or ""
     if not text:
-        return None
+        return None, 0.0
     language = detect_language(text)
     topics = extract_topics(text, language)
-    return Lyrics(
+    row = Lyrics(
         track_id=track.video_id,
         text=text,
         synced=bool(best.get("syncedLyrics")),
@@ -203,6 +224,67 @@ def _fetch_lyrics(track: Track, client: httpx.Client) -> Lyrics | None:
         topics=json.dumps(topics, ensure_ascii=False) if topics else "",
         fetched_at=datetime.utcnow(),
     )
+    return row, best_ratio
+
+
+def vocal_score(feat: AudioFeatures | None) -> float:
+    """Combined vocal signal: the voice_instrumental head, plus the
+    Jamendo "Voice" instrument score as an independent second opinion
+    (the binary head sometimes underestimates vocals)."""
+    if feat is None:
+        return 0.0
+    score = float(feat.vocal_ratio or 0.0)
+    if feat.tags:
+        try:
+            data = json.loads(feat.tags)
+            for inst in data.get("instruments", []):
+                if str(inst.get("name", "")).lower() == "voice":
+                    score = max(score, float(inst.get("score", 0.0)))
+        except (ValueError, TypeError, KeyError):
+            pass
+    return score
+
+
+def _set_has_vocals(session: Session, video_id: str, value: bool) -> None:
+    feat = session.get(AudioFeatures, video_id)
+    if feat is not None:
+        feat.has_vocals = value
+        session.add(feat)
+
+
+def _whisper_verdict(track: Track, feat: AudioFeatures) -> bool | None:
+    """Whisper spot-check for uncertain tracks. Returns the verdict or
+    None (nothing checked: clearly vocal, audio missing, model failed).
+    On a positive verdict the transcript is stored as fallback lyrics.
+    """
+    if vocal_score(feat) >= settings.lyrics_min_vocal:
+        return None
+    from app.services import vocals
+
+    res = vocals.check_words(track.video_id, track.duration)
+    if res is None:
+        return None
+    has_words = res["words"] >= settings.whisper_min_words
+    with Session(engine) as session:
+        _set_has_vocals(session, track.video_id, has_words)
+        if has_words:
+            text = res["text"]
+            language = res["language"] or detect_language(text)
+            topics = extract_topics(text, language)
+            session.merge(
+                Lyrics(
+                    track_id=track.video_id,
+                    text=text,
+                    synced=False,
+                    source="whisper",
+                    language=language,
+                    sentiment=sentiment_score(text),
+                    topics=json.dumps(topics, ensure_ascii=False) if topics else "",
+                    fetched_at=datetime.utcnow(),
+                )
+            )
+        session.commit()
+    return has_words
 
 
 def run_lyrics(stop: threading.Event | None = None) -> None:
@@ -221,34 +303,73 @@ def run_lyrics(stop: threading.Event | None = None) -> None:
                 )
                 .order_by(Track.play_count.desc())
             )
-            candidates = [
-                t
-                for t, f in session.exec(stmt).all()
-                if t.video_id not in have
-                and (f.vocal_ratio is None or f.vocal_ratio >= settings.lyrics_min_vocal)
-            ][: settings.lyrics_limit]
+            pairs = [
+                (t, f) for t, f in session.exec(stmt).all() if t.video_id not in have
+            ]
+        # most-played tracks first (the job is capped by lyrics_limit per
+        # run); the vocal score is a tiebreak
+        pairs.sort(key=lambda tf: (tf[0].play_count, vocal_score(tf[1])), reverse=True)
+        candidates = pairs if settings.lyrics_limit <= 0 else pairs[: settings.lyrics_limit]
 
         total = len(candidates)
         jobs.progress(
-            "lyrics", 0, total, f"to search: {total} (limit {settings.lyrics_limit})"
-            if total
+            "lyrics", 0, total, f"to search: {total}" if total
             else "no tracks to search lyrics for",
         )
 
         found = 0
+        confirmed = 0
+        whispered = 0
+        marked = 0
+        net_errors = 0
         with httpx.Client(
             timeout=15,
             headers={"User-Agent": settings.mb_user_agent},
         ) as client:
-            for i, track in enumerate(candidates):
+            for i, (track, feat) in enumerate(candidates):
                 if jobs.should_stop("lyrics", stop):
                     break
-                row = _fetch_lyrics(track, client)
+                try:
+                    row, ratio = _fetch_lyrics(track, client)
+                except httpx.HTTPError:
+                    # network outage — do not cache misses, abort soon
+                    net_errors += 1
+                    if net_errors >= 10:
+                        jobs.fail_job(
+                            "lyrics", "network unavailable (10 consecutive errors)"
+                        )
+                        return
+                    continue
+                net_errors = 0
                 if row is not None:
                     with Session(engine) as session:
                         session.add(row)
+                        if ratio >= CONFIRM_RATIO:
+                            # a confident lyrics match itself proves vocals
+                            _set_has_vocals(session, track.video_id, True)
+                            confirmed += 1
                         session.commit()
                     found += 1
+                else:
+                    if feat is not None and feat.has_vocals is None:
+                        verdict = _whisper_verdict(track, feat)
+                        if verdict:
+                            whispered += 1
+                            found += 1
+                            continue
+                    # confident LRCLIB miss: remember it so the queue is
+                    # not stuck on the same tracks at every run
+                    with Session(engine) as session:
+                        session.merge(
+                            Lyrics(
+                                track_id=track.video_id,
+                                text="",
+                                source="none",
+                                fetched_at=datetime.utcnow(),
+                            )
+                        )
+                        session.commit()
+                    marked += 1
                 if (i + 1) % 10 == 0 or i + 1 == total:
                     jobs.progress(
                         "lyrics",
@@ -264,7 +385,11 @@ def run_lyrics(stop: threading.Event | None = None) -> None:
             return
         jobs.finish_job(
             "lyrics",
-            detail=f"found {found} lyrics out of {total} checked",
+            detail=(
+                f"found {found} lyrics out of {total} checked "
+                f"({confirmed} confirmed, {whispered} transcribed by whisper, "
+                f"{marked} without lyrics)"
+            ),
         )
     except Exception as exc:  # noqa: BLE001
         jobs.fail_job("lyrics", f"{type(exc).__name__}: {exc}")

@@ -447,7 +447,14 @@ export function TrackCard() {
       {t.has_lyrics && (
         <Card>
           <CardHeader className="flex-row items-center justify-between">
-            <CardTitle>Lyrics</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              Lyrics
+              {lyrics?.source === "whisper" && (
+                <Badge variant="outline" className="text-xs">
+                  whisper draft
+                </Badge>
+              )}
+            </CardTitle>
             <Button
               size="sm"
               variant="outline"

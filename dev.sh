@@ -22,6 +22,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# essentia-tensorflow may be shadowed by the plain wheel on a fresh venv
+(cd backend && uv run --no-sync python tools/ensure_essentia.py) || exit 1
+
 (cd backend && uv run uvicorn app.main:app --reload --host "$API_HOST" --port "$API_PORT") &
 API_PID=$!
 

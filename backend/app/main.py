@@ -1,4 +1,5 @@
 import json
+import re
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -8,7 +9,7 @@ from zoneinfo import ZoneInfo
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
 from app.config import settings
@@ -91,21 +92,12 @@ def _job_payload(job: Job) -> dict:
     }
 
 
-def _root_history() -> list[Path]:
-    return sorted(
-        (p for p in Path(".").glob("*.json") if p.stat().st_size > 100_000),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-
-
 def _state_payload(session: Session) -> dict:
     totals = stats_svc.totals(session)
     job_rows = session.exec(select(Job).order_by(Job.id)).all()
     latest: dict[str, Job] = {}
     for j in job_rows:
         latest[j.kind] = j
-    roots = _root_history()
     return {
         "totals": totals,
         "jobs": [
@@ -113,8 +105,6 @@ def _state_payload(session: Session) -> dict:
         ],
         "has_api_key": bool(settings.youtube_api_key.strip()),
         "audio_limit": settings.audio_analysis_limit,
-        "root_history_exists": bool(roots),
-        "root_json_name": roots[0].name if roots else "",
     }
 
 
@@ -126,22 +116,12 @@ def api_state() -> dict:
 
 @app.post("/api/import")
 async def api_import(
-    file: UploadFile | None = File(None),
-    path: str = Form(""),
+    file: UploadFile = File(...),
     tz: str = Form(""),
 ) -> dict:
-    target = ""
-    if file is not None and file.filename:
-        settings.uploads_dir.mkdir(parents=True, exist_ok=True)
-        target = str(settings.uploads_dir / "history.json")
-        Path(target).write_bytes(await file.read())
-    elif path.strip():
-        target = path.strip()
-    if not target or not Path(target).exists():
-        raise HTTPException(
-            400,
-            "File not found. Upload a history JSON or provide a valid path.",
-        )
+    settings.uploads_dir.mkdir(parents=True, exist_ok=True)
+    target = str(settings.uploads_dir / "history.json")
+    Path(target).write_bytes(await file.read())
     try:
         load_history_file(target)
     except Exception:
@@ -169,6 +149,15 @@ def api_pipeline_filter() -> dict:
 def api_pipeline_audio() -> dict:
     _spawn("audio", run_audio_analysis)
     return {"ok": True}
+
+
+@app.post("/api/pipeline/audio-retry")
+def api_pipeline_audio_retry() -> dict:
+    from app.services.audio import reset_unavailable
+
+    reset = reset_unavailable()
+    _spawn("audio", run_audio_analysis)
+    return {"ok": True, "reset": reset}
 
 
 @app.post("/api/pipeline/clusters")
@@ -224,13 +213,17 @@ def api_tracks(
     if order not in ("asc", "desc"):
         order = "desc"
     conditions = [Track.is_music == (not hidden)]  # noqa: E712
-    term = q.strip().lower()
+    term = q.strip()
     if term:
-        like = f"%{term}%"
+        # REGEXP (Python-backed, Unicode-aware) — SQLite lower()/LIKE are
+        # ASCII-only and miss Cyrillic in other case; artist_canonical is
+        # the normalized artist used for the artist search
+        pattern = re.escape(term)
         conditions.append(
             or_(
-                func.lower(Track.title).like(like),
-                func.lower(Track.channel).like(like),
+                Track.title.op("REGEXP")(pattern),
+                Track.channel.op("REGEXP")(pattern),
+                Track.artist_canonical.op("REGEXP")(pattern),
             )
         )
     if cluster_id is not None:
@@ -240,8 +233,15 @@ def api_tracks(
             AudioFeatures.tags.like(f'%"{genre}"%')  # type: ignore[union-attr]
         )
     if instrumental:
+        # a whisper verdict wins; without one fall back to the vocal score
         conditions.append(
-            (AudioFeatures.vocal_ratio < settings.lyrics_min_vocal)  # type: ignore[operator]
+            or_(
+                AudioFeatures.has_vocals == False,  # noqa: E712
+                and_(
+                    AudioFeatures.has_vocals.is_(None),
+                    AudioFeatures.vocal_ratio < settings.lyrics_min_vocal,  # type: ignore[operator]
+                ),
+            )
         )
     if language:
         conditions.append(Lyrics.language == language)
@@ -318,6 +318,7 @@ def api_tracks(
                         "mood_atmospheric": _f(f.mood_atmospheric, 3),
                         "features_source": f.source,
                         "vocal_ratio": _f(f.vocal_ratio, 3),
+                        "has_vocals": f.has_vocals,
                     }
                 )
                 if f.tags:
@@ -402,6 +403,7 @@ def api_track_detail(video_id: str) -> dict:
                     "mood_atmospheric": _f(f.mood_atmospheric, 3),
                     "features_source": f.source,
                     "vocal_ratio": _f(f.vocal_ratio, 3),
+                    "has_vocals": f.has_vocals,
                 }
             )
             if f.tags:
@@ -463,7 +465,7 @@ def api_hide_channel(channel: str = Body(..., embed=True)) -> dict:
         return {"ok": True, "channel": channel, "hidden": len(tracks)}
 
 
-GENRE_RU = {
+GENRE = {
     "Blues": "blues", "Classical": "classical", "Electronic": "electronic",
     "Folk, World, & Country": "folk", "Funk / Soul": "funk/soul",
     "Hip Hop": "hip-hop", "Jazz": "jazz", "Latin": "latin",
@@ -516,13 +518,29 @@ def api_genres() -> list[dict]:
     result = [
         {
             "name": name,
-            "name_ru": GENRE_RU.get(name, name),
+            "name_ru": GENRE.get(name, name),
             "count": n,
         }
         for name, n in sorted(counts.items(), key=lambda x: -x[1])[:40]
         if n >= 3
     ]
     return result
+
+
+@app.get("/api/languages")
+def api_languages() -> list[dict]:
+    """Lyrics languages present in the DB with track counts (tracks filter)."""
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Lyrics.language, func.count(Lyrics.track_id))
+            .where(Lyrics.text != "")  # type: ignore[arg-type]
+            .group_by(Lyrics.language)
+        ).all()
+    return [
+        {"code": lang, "count": n}
+        for lang, n in sorted(rows, key=lambda r: (-r[1], r[0]))
+        if lang
+    ]
 
 
 @app.get("/api/tracks/{video_id}/lyrics")
@@ -535,6 +553,7 @@ def api_track_lyrics(video_id: str) -> dict:
             "track_id": video_id,
             "text": row.text,
             "synced": row.synced,
+            "source": row.source,
             "language": row.language,
             "sentiment": row.sentiment,
         }
@@ -751,12 +770,6 @@ SETTINGS_FIELDS: list[dict] = [
         "hint": "Saves disk space, but re-analysis requires downloading again.",
     },
     {
-        "key": "cluster_k",
-        "type": "int",
-        "label": "Number of clusters (K)",
-        "hint": "0 — pick automatically.",
-    },
-    {
         "key": "cluster_use_embedding",
         "type": "bool",
         "label": "Cluster in neural embedding space",
@@ -767,13 +780,26 @@ SETTINGS_FIELDS: list[dict] = [
         "key": "lyrics_limit",
         "type": "int",
         "label": "Lyrics lookup limit per run",
-        "hint": "How many tracks to check per run.",
+        "hint": "How many tracks to check per run (0 — all eligible).",
     },
     {
         "key": "lyrics_min_vocal",
         "type": "float",
         "label": "Vocal threshold for lyrics",
-        "hint": "Vocal ratio below which lyrics are not looked up (instrumentals).",
+        "hint": "Vocal score above which a track counts as vocal without a "
+        "whisper spot-check (LRCLIB is searched regardless).",
+    },
+    {
+        "key": "whisper_model",
+        "type": "str",
+        "label": "Whisper model",
+        "hint": "faster-whisper size (tiny/base/small) for the words spot-check.",
+    },
+    {
+        "key": "whisper_min_words",
+        "type": "int",
+        "label": "Whisper word threshold",
+        "hint": "Recognized words in the fragment for the track to count as vocal.",
     },
     {
         "key": "audio_cookies_from_browser",

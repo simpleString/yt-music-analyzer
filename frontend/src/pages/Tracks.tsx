@@ -59,11 +59,65 @@ function formatDuration(seconds: number | null): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-const LANG_OPTIONS = [
-  { value: "ru", label: "Russian" },
-  { value: "en", label: "English" },
-  { value: "cjk", label: "Japanese/Chinese" },
-];
+const LANG_LABELS: Record<string, string> = {
+  ru: "Russian",
+  en: "English",
+  ja: "Japanese",
+  zh: "Chinese",
+  ko: "Korean",
+  de: "German",
+  fr: "French",
+  es: "Spanish",
+  it: "Italian",
+  pt: "Portuguese",
+  nl: "Dutch",
+  sv: "Swedish",
+  no: "Norwegian",
+  da: "Danish",
+  fi: "Finnish",
+  pl: "Polish",
+  cs: "Czech",
+  sk: "Slovak",
+  sl: "Slovenian",
+  hr: "Croatian",
+  mk: "Macedonian",
+  bg: "Bulgarian",
+  ro: "Romanian",
+  hu: "Hungarian",
+  el: "Greek",
+  tr: "Turkish",
+  uk: "Ukrainian",
+  lt: "Lithuanian",
+  lv: "Latvian",
+  et: "Estonian",
+  sq: "Albanian",
+  he: "Hebrew",
+  ar: "Arabic",
+  fa: "Persian",
+  ur: "Urdu",
+  hi: "Hindi",
+  bn: "Bengali",
+  pa: "Punjabi",
+  gu: "Gujarati",
+  mr: "Marathi",
+  kn: "Kannada",
+  ml: "Malayalam",
+  ta: "Tamil",
+  te: "Telugu",
+  ne: "Nepali",
+  th: "Thai",
+  vi: "Vietnamese",
+  id: "Indonesian",
+  tl: "Tagalog",
+  sw: "Swahili",
+  so: "Somali",
+  af: "Afrikaans",
+  cy: "Welsh",
+  ca: "Catalan",
+  cjk: "Japanese/Chinese (legacy)",
+};
+
+const langLabel = (code: string) => LANG_LABELS[code] ?? code;
 
 function techTooltip(t: TrackListItem): string {
   const parts = [`classification: ${reasonLabel(t.music_reason)}`];
@@ -75,6 +129,7 @@ function techTooltip(t: TrackListItem): string {
     if (t.dynamics != null) parts.push(`dynamics: ${t.dynamics.toFixed(2)}`);
     if (t.vocal_ratio != null)
       parts.push(`vocals: ${Math.round(t.vocal_ratio * 100)}%`);
+    if (t.has_vocals === false) parts.push("vocals: none (whisper-checked)");
     if (t.genres?.length) parts.push(`genres: ${t.genres.join(", ")}`);
     if (t.instruments?.length)
       parts.push(`instruments: ${t.instruments.join(", ")}`);
@@ -149,6 +204,11 @@ export function Tracks() {
   const { data: genres } = useQuery({
     queryKey: ["genres"],
     queryFn: api.genres,
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: languages } = useQuery({
+    queryKey: ["languages"],
+    queryFn: api.languages,
     staleTime: 5 * 60 * 1000,
   });
   const genreLabel = (name: string): string =>
@@ -274,8 +334,6 @@ export function Tracks() {
     }
   };
 
-  console.log(clusterId);
-
   return (
     <div className="flex flex-col gap-2.5">
       <div
@@ -294,7 +352,7 @@ export function Tracks() {
         >
           <Input
             type="search"
-            placeholder="Search by title or channel…"
+            placeholder="Search by title, artist or channel…"
             className="max-w-md flex-1"
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -380,9 +438,9 @@ export function Tracks() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="any">Any language</SelectItem>
-                  {LANG_OPTIONS.map((l) => (
-                    <SelectItem key={l.value} value={l.value}>
-                      {l.label}
+                  {(languages ?? []).map((l) => (
+                    <SelectItem key={l.code || "unknown"} value={l.code}>
+                      {langLabel(l.code)} ({l.count})
                     </SelectItem>
                   ))}
                 </SelectContent>

@@ -1,12 +1,8 @@
 import { useEffect, useRef, useState } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Square } from "lucide-react"
 
-import { api, type Job, type JobStatus } from "@/lib/api"
-import { useStateQuery } from "@/lib/api"
+import { type Job, type JobStatus, useStateQuery } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -85,15 +81,7 @@ function useJobRate(kind: string, done: number, active: boolean) {
   return dd / dt
 }
 
-function JobRow({
-  job,
-  onCancel,
-  cancelPending,
-}: {
-  job: Job
-  onCancel: (kind: string) => void
-  cancelPending: boolean
-}) {
+function JobRow({ job }: { job: Job }) {
   const running = job.status === "running"
   // tick every second: the "updated N s ago" label lives between requests
   const [, setTick] = useState(0)
@@ -161,19 +149,6 @@ function JobRow({
             updated {age} s ago
           </span>
         )}
-        {running && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="hover:text-[#cc0000] h-6 gap-1 px-2 text-xs"
-            disabled={cancelPending}
-            title="Stop the job"
-            onClick={() => onCancel(job.kind)}
-          >
-            <Square className="size-3" />
-            Stop
-          </Button>
-        )}
       </div>
       {job.total > 0 && (
         <Progress
@@ -192,14 +167,7 @@ function JobRow({
 }
 
 export function JobsPanel() {
-  const queryClient = useQueryClient()
   const { data } = useStateQuery()
-
-  const cancel = useMutation({
-    mutationFn: (kind: string) => api.cancelJob(kind),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["state"] }),
-  })
 
   if (!data) return null
 
@@ -236,12 +204,7 @@ export function JobsPanel() {
           </p>
         )}
         {jobs.map((job) => (
-          <JobRow
-            key={job.kind}
-            job={job}
-            onCancel={(kind) => cancel.mutate(kind)}
-            cancelPending={cancel.isPending}
-          />
+          <JobRow key={job.kind} job={job} />
         ))}
       </CardContent>
     </Card>

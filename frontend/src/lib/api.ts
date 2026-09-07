@@ -52,8 +52,6 @@ export interface AppState {
   jobs: Job[]
   has_api_key: boolean
   audio_limit: number
-  root_history_exists: boolean
-  root_json_name: string
 }
 
 export interface TagScore {
@@ -76,6 +74,7 @@ export interface TrackDetail {
   sentiment: number | null
   topic: string
   has_lyrics: boolean
+  has_vocals?: boolean | null
   genre_scores: TagScore[]
   instrument_scores: TagScore[]
   tempo?: number | null
@@ -122,6 +121,7 @@ export interface TrackListItem {
   dynamics?: number | null
   percussive?: number | null
   vocal_ratio?: number | null
+  has_vocals?: boolean | null
   genres?: string[]
   instruments?: string[]
   language?: string
@@ -168,6 +168,11 @@ export interface ClusterOption {
 export interface GenreOption {
   name: string
   name_ru: string
+  count: number
+}
+
+export interface LanguageOption {
+  code: string
   count: number
 }
 
@@ -276,7 +281,7 @@ async function getJson<T>(url: string): Promise<T> {
   return res.json() as Promise<T>
 }
 
-async function postJson(url: string, body: object): Promise<void> {
+async function postJson<T = void>(url: string, body: object): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -285,6 +290,7 @@ async function postJson(url: string, body: object): Promise<void> {
   if (!res.ok) {
     throw new Error((await res.json()).detail ?? res.statusText)
   }
+  return res.json() as Promise<T>
 }
 
 async function postForm(url: string, form: FormData): Promise<void> {
@@ -343,6 +349,7 @@ export const api = {
   },
   clusters: () => getJson<ClusterOption[]>("/api/clusters"),
   genres: () => getJson<GenreOption[]>("/api/genres"),
+  languages: () => getJson<LanguageOption[]>("/api/languages"),
   classifyTrack: (videoId: string, isMusic: boolean) =>
     postJson("/api/tracks/" + encodeURIComponent(videoId) + "/classify", {
       is_music: isMusic,
@@ -373,14 +380,10 @@ export const api = {
     form.append("tz", browserTimezone())
     return postForm("/api/import", form)
   },
-  importPath: (path: string) => {
-    const form = new FormData()
-    form.append("path", path)
-    form.append("tz", browserTimezone())
-    return postForm("/api/import", form)
-  },
   runFilter: () => postForm("/api/pipeline/filter", new FormData()),
   runAudio: () => postForm("/api/pipeline/audio", new FormData()),
+  retryFailedAudio: () =>
+    postJson<{ ok: boolean; reset: number }>("/api/pipeline/audio-retry", {}),
   runClusters: () => postForm("/api/pipeline/clusters", new FormData()),
   runLyrics: () => postForm("/api/pipeline/lyrics", new FormData()),
   cancelJob: (kind: string) =>
@@ -388,7 +391,7 @@ export const api = {
   trackDetail: (videoId: string) =>
     getJson<TrackDetail>(`/api/tracks/${encodeURIComponent(videoId)}`),
   trackLyrics: (videoId: string) =>
-    getJson<{ track_id: string; text: string; synced: boolean; language: string; sentiment: number }>(
+    getJson<{ track_id: string; text: string; synced: boolean; source: string; language: string; sentiment: number }>(
       `/api/tracks/${encodeURIComponent(videoId)}/lyrics`
     ),
   settings: () => getJson<{ fields: SettingsField[] }>("/api/settings"),

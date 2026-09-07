@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { Square } from "lucide-react"
 
 import { api, type JobKind, useStateQuery } from "@/lib/api"
 import { JobsPanel } from "@/components/JobsPanel"
@@ -14,12 +15,34 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 
+function StopButton({
+  kind,
+  pending,
+  onCancel,
+}: {
+  kind: JobKind
+  pending: boolean
+  onCancel: (kind: JobKind) => void
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      disabled={pending}
+      onClick={() => onCancel(kind)}
+    >
+      <Square className="size-3" />
+      Stop
+    </Button>
+  )
+}
+
 export function ImportPage() {
   const queryClient = useQueryClient()
   const { data: state } = useStateQuery()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [pathValue, setPathValue] = useState("")
   const [error, setError] = useState("")
+  const [info, setInfo] = useState("")
 
   const prevStatuses = useRef<Record<string, string>>({})
   useEffect(() => {
@@ -48,15 +71,6 @@ export function ImportPage() {
     onError: (e) => setError(e.message),
   })
 
-  const importPath = useMutation({
-    mutationFn: api.importPath,
-    onSuccess: () => {
-      setError("")
-      invalidate()
-    },
-    onError: (e) => setError(e.message),
-  })
-
   const pipeline = useMutation({
     mutationFn: (kind: Exclude<JobKind, "import">) => {
       if (kind === "filter") return api.runFilter()
@@ -68,12 +82,50 @@ export function ImportPage() {
     onError: (e) => setError(e.message),
   })
 
+  const retryFailed = useMutation({
+    mutationFn: () => api.retryFailedAudio(),
+    onSuccess: (r) => {
+      setError("")
+      setInfo(
+        r.reset > 0
+          ? `Cleared ${r.reset} unavailable mark(s) — audio analysis restarted`
+          : "No unavailable marks — audio analysis restarted",
+      )
+      invalidate()
+    },
+    onError: (e) => setError(e.message),
+  })
+
+  const cancel = useMutation({
+    mutationFn: (kind: JobKind) => api.cancelJob(kind),
+    onSuccess: invalidate,
+    onError: (e) => setError(e.message),
+  })
+
   const busyKinds = new Set(
     state?.jobs
       .filter((j) => j.status === "running" || j.status === "pending")
       .map((j) => j.kind) ?? []
   )
-  const busy = importFile.isPending || importPath.isPending || pipeline.isPending
+  const busy = importFile.isPending || pipeline.isPending
+
+  const pipelineButtons: { kind: Exclude<JobKind, "import">; label: ReactNode }[] =
+    [
+      { kind: "filter", label: "Music filter" },
+      {
+        kind: "audio",
+        label: (
+          <>
+            Audio analysis{" "}
+            {state?.audio_limit
+              ? `(top ${state.audio_limit})`
+              : "(all tracks)"}
+          </>
+        ),
+      },
+      { kind: "clusters", label: "Clustering → playlists" },
+      { kind: "lyrics", label: "Lyrics" },
+    ]
 
   return (
     <div className="flex flex-col gap-3">
@@ -84,6 +136,12 @@ export function ImportPage() {
       {error && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {info && (
+        <Alert>
+          <AlertDescription>{info}</AlertDescription>
         </Alert>
       )}
 
@@ -110,38 +168,18 @@ export function ImportPage() {
               required
               className="max-w-sm"
             />
-            <Button type="submit" disabled={busy}>
-              Upload file
-            </Button>
+            {busyKinds.has("import") ? (
+              <StopButton
+                kind="import"
+                pending={cancel.isPending}
+                onCancel={(k) => cancel.mutate(k)}
+              />
+            ) : (
+              <Button type="submit" disabled={busy}>
+                Upload file
+              </Button>
+            )}
           </form>
-          <form
-            className="flex flex-wrap items-center gap-2"
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (pathValue.trim()) importPath.mutate(pathValue.trim())
-            }}
-          >
-            <Input
-              type="text"
-              placeholder="or a file path on disk"
-              className="max-w-sm"
-              value={pathValue}
-              onChange={(e) => setPathValue(e.target.value)}
-            />
-            <Button
-              type="submit"
-              variant="outline"
-              disabled={busy || !state?.root_history_exists}
-            >
-              Import from path
-            </Button>
-          </form>
-          {state?.root_history_exists && (
-            <p className="text-muted-foreground text-sm">
-              Found <code>{state.root_json_name}</code> in the project root —
-              you can import it directly.
-            </p>
-          )}
         </CardContent>
       </Card>
 
@@ -157,32 +195,33 @@ export function ImportPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-1.5">
+          {pipelineButtons.map(({ kind, label }) =>
+            busyKinds.has(kind) ? (
+              <StopButton
+                key={kind}
+                kind={kind}
+                pending={cancel.isPending}
+                onCancel={(k) => cancel.mutate(k)}
+              />
+            ) : (
+              <Button
+                key={kind}
+                disabled={busy}
+                onClick={() => pipeline.mutate(kind)}
+              >
+                {label}
+              </Button>
+            )
+          )}
           <Button
-            disabled={busy || busyKinds.has("filter")}
-            onClick={() => pipeline.mutate("filter")}
+            variant="outline"
+            disabled={busy || retryFailed.isPending}
+            onClick={() => {
+              setInfo("")
+              retryFailed.mutate()
+            }}
           >
-            Music filter
-          </Button>
-          <Button
-            disabled={busy || busyKinds.has("audio")}
-            onClick={() => pipeline.mutate("audio")}
-          >
-            Audio analysis{" "}
-            {state?.audio_limit
-              ? `(top ${state.audio_limit})`
-              : "(all tracks)"}
-          </Button>
-          <Button
-            disabled={busy || busyKinds.has("clusters")}
-            onClick={() => pipeline.mutate("clusters")}
-          >
-            Clustering → playlists
-          </Button>
-          <Button
-            disabled={busy || busyKinds.has("lyrics")}
-            onClick={() => pipeline.mutate("lyrics")}
-          >
-            Lyrics
+            Retry failed videos
           </Button>
         </CardContent>
       </Card>

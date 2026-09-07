@@ -8,6 +8,31 @@ engine = create_engine(
 )
 
 
+from sqlalchemy import event
+
+
+@event.listens_for(engine, "connect")
+def _sqlite_functions(dbapi_conn, _record) -> None:
+    """SQLite lower()/LIKE ignore non-ASCII — search uses a Python-backed
+    REGEXP instead: both sides are folded (NFKD, combining marks stripped,
+    casefold), so Будда/БУДДА, café/Cafe, straße/STRASSE all match."""
+
+    import re
+    import unicodedata
+
+    def _fold(s: str) -> str:
+        s = unicodedata.normalize("NFKD", s)
+        s = "".join(c for c in s if not unicodedata.combining(c))
+        return s.casefold()
+
+    def regexp(pattern: str, value: str | None) -> bool:
+        if value is None:
+            return False
+        return re.search(_fold(pattern), _fold(value)) is not None
+
+    dbapi_conn.create_function("regexp", 2, regexp)
+
+
 def init_db() -> None:
     import app.models  # noqa: F401
 
@@ -34,6 +59,7 @@ def init_db() -> None:
             "percussive": "ALTER TABLE audio_features ADD COLUMN percussive FLOAT",
             "tags": "ALTER TABLE audio_features ADD COLUMN tags VARCHAR NOT NULL DEFAULT ''",
             "vocal_ratio": "ALTER TABLE audio_features ADD COLUMN vocal_ratio FLOAT",
+            "has_vocals": "ALTER TABLE audio_features ADD COLUMN has_vocals INTEGER",
             "mood_epic": "ALTER TABLE audio_features ADD COLUMN mood_epic FLOAT NOT NULL DEFAULT 0.125",
             "mood_dark": "ALTER TABLE audio_features ADD COLUMN mood_dark FLOAT NOT NULL DEFAULT 0.125",
             "mood_romantic": "ALTER TABLE audio_features ADD COLUMN mood_romantic FLOAT NOT NULL DEFAULT 0.125",
@@ -84,6 +110,7 @@ def init_db() -> None:
         conn.commit()
         _backfill_artists()
         _backfill_topics()
+        _backfill_vocals()
 
 
 def _backfill_topics() -> None:
@@ -107,6 +134,27 @@ def _backfill_topics() -> None:
                 row.topics = json.dumps(topics, ensure_ascii=False)
                 session.add(row)
         session.commit()
+
+
+def _backfill_vocals() -> None:
+    """Tracks with fetched lyrics definitely have words."""
+    from app.models import AudioFeatures, Lyrics
+
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Lyrics.track_id).where(  # type: ignore[arg-type]
+                Lyrics.text != ""
+            )
+        ).all()
+        updated = 0
+        for track_id in rows:
+            feat = session.get(AudioFeatures, track_id)
+            if feat is not None and feat.has_vocals is None:
+                feat.has_vocals = True
+                session.add(feat)
+                updated += 1
+        if updated:
+            session.commit()
 
 
 def _backfill_artists() -> None:

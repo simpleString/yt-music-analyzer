@@ -95,12 +95,6 @@ def compute_moods(session: Session, features: list[AudioFeatures]) -> None:
     session.commit()
 
 
-def auto_k(n: int) -> int:
-    if n < 3:
-        return 1
-    return int(min(8, max(2, round(np.sqrt(n / 2)))))
-
-
 def _weighted_matrix(groups: dict, ids: list[str]) -> np.ndarray:
     """Weighted matrix from groups: block × √weight (euclidean metric)."""
     blocks = []
@@ -189,8 +183,8 @@ def run_clustering(stop: threading.Event | None = None) -> None:
             feat_by_id = {f.track_id: f for f in features}
 
             n_usable = len(ids)
-            k = cfg.cluster_k if cfg.cluster_k > 0 else auto_k(n_usable)
-            k = max(1, min(k, n_usable))
+            # fixed number of mood playlists
+            k = max(1, min(8, n_usable))
 
             km = KMeans(n_clusters=k, n_init=10, random_state=42)
             labels = km.fit_predict(X)

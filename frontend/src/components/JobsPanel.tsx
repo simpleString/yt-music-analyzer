@@ -18,6 +18,7 @@ const KIND_LABELS: Record<Job["kind"], string> = {
   audio: "Audio analysis",
   clusters: "Clustering",
   lyrics: "Lyrics",
+  "mb-genres": "Artist genres",
 }
 
 const STATUS_LABELS: Record<JobStatus, string> = {

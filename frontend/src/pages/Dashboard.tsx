@@ -13,6 +13,7 @@ import {
 
 import { api } from "@/lib/api"
 import { artistPath } from "@/lib/utils"
+import { LoadingNote } from "@/components/LoadingNote"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -115,7 +116,12 @@ export function Dashboard() {
         ? [range.from, range.to].filter(Boolean).join(" — ")
         : PRESET_LABELS[preset]
 
-  if (isLoading) return <p className="text-muted-foreground">Loading…</p>
+  if (isLoading)
+    return (
+      <div className="flex justify-center py-10">
+        <LoadingNote />
+      </div>
+    )
   if (isError || !data) return <p>Failed to load data.</p>
 
   if (!data.totals.music_listens) {

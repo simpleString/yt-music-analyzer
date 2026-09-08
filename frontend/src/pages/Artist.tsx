@@ -7,7 +7,9 @@ import {
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { api, type TrackListItem, type TrackSort } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { techTooltip } from "@/lib/track";
+import { cn, artistPath } from "@/lib/utils";
+import { LoadingNote } from "@/components/LoadingNote";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -136,7 +138,7 @@ export function ArtistPage() {
   }
 
   if (summary.isPending) {
-    return <p className="text-muted-foreground">Loading…</p>;
+    return <LoadingNote />;
   }
 
   if (summary.isError || !summary.data) {
@@ -158,14 +160,19 @@ export function ArtistPage() {
 
   const s = summary.data;
 
+  const mb = s.mb;
+  const mbGenres = mb
+    ? (mb.genres.length > 0 ? mb.genres : mb.tags)
+        .slice(0, 5)
+        .map((t) => t.name)
+    : [];
+  const country = mb?.country || mb?.area || "";
+  const years = mb
+    ? [mb.life_span.begin, mb.life_span.end].filter(Boolean).join("–")
+    : "";
+
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
-          ← Back
-        </Button>
-      </div>
-
       {/* Header */}
       <Card>
         <CardContent className="flex items-start gap-3">
@@ -188,7 +195,9 @@ export function ArtistPage() {
                 {s.name}
               </span>
               <span className="text-muted-foreground min-w-0 shrink-[2] truncate text-xs">
-                artist
+                {mb?.disambiguation
+                  ? `artist · ${mb.disambiguation}`
+                  : "artist"}
               </span>
             </div>
             <div className="grid grid-cols-2 items-center gap-1">
@@ -213,21 +222,52 @@ export function ArtistPage() {
                 </div>
                 <div className="flex flex-col sm:border-l sm:border-[#e0e0e0] sm:pl-4">
                   <Stat
-                    label="first listen"
-                    value={s.first_listen?.slice(0, 10) ?? "—"}
-                  />
-                  <Stat
                     label="last listen"
                     value={s.last_listen?.slice(0, 10) ?? "—"}
                   />
                 </div>
               </div>
             </div>
+            {(mbGenres.length > 0 || country || years || mb?.mbid) && (
+              <div className="flex flex-wrap items-center gap-1">
+                {mbGenres.map((g) => (
+                  <Badge key={g} variant="secondary" className="font-normal">
+                    {genreLabel(g)}
+                  </Badge>
+                ))}
+                {country && (
+                  <Badge
+                    variant="outline"
+                    className="font-normal"
+                    title={mb?.country ? undefined : mb?.area}
+                  >
+                    {country}
+                  </Badge>
+                )}
+                {years && (
+                  <Badge variant="outline" className="font-normal">
+                    {years}
+                  </Badge>
+                )}
+                {mb?.mbid && (
+                  <a
+                    href={`https://musicbrainz.org/artist/${mb.mbid}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="MusicBrainz page"
+                  >
+                    <Badge variant="outline" className="font-normal">
+                      MB ↗
+                    </Badge>
+                  </a>
+                )}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
 
-      {isPending && <p className="text-muted-foreground">Loading…</p>}
+      {isPending && <LoadingNote />}
       {isError && <p>Failed to load tracks.</p>}
 
       {data && total === 0 && (
@@ -285,6 +325,7 @@ export function ArtistPage() {
                     GRID,
                     "hover:bg-[#ffffcc] cursor-pointer border-b border-[#e0e0e0]",
                   )}
+                  title={techTooltip(t)}
                   onClick={(e) => {
                     if (
                       e.target instanceof HTMLElement &&
@@ -311,15 +352,21 @@ export function ArtistPage() {
                     />
                   </a>
                   <span className="min-w-0">
-                    <span
+                    <a
+                      href={`https://www.youtube.com/watch?v=${t.video_id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       className="block truncate text-sm hover:underline max-w-fit"
                       title={t.title}
                     >
                       {t.title}
-                    </span>
-                    <span className="text-muted-foreground block truncate text-xs">
+                    </a>
+                    <Link
+                      to={artistPath(t.artist ?? t.channel)}
+                      className="text-muted-foreground block truncate text-xs hover:underline max-w-fit"
+                    >
                       {t.channel}
-                    </span>
+                    </Link>
                   </span>
                   <span className="flex flex-col items-start gap-0.5">
                     {t.cluster_name ? (
@@ -372,9 +419,7 @@ export function ArtistPage() {
             ref={sentinelRef}
             className="flex h-10 items-center justify-center"
           >
-            {isFetchingNextPage && (
-              <span className="text-muted-foreground text-sm">Loading…</span>
-            )}
+            {isFetchingNextPage && <LoadingNote size="sm" />}
             {!hasNextPage && (
               <span className="text-muted-foreground text-sm">
                 All tracks loaded

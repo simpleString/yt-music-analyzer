@@ -76,6 +76,7 @@ export function ImportPage() {
       if (kind === "filter") return api.runFilter()
       if (kind === "audio") return api.runAudio()
       if (kind === "clusters") return api.runClusters()
+      if (kind === "mb-genres") return api.runMbGenres()
       return api.runLyrics()
     },
     onSuccess: invalidate,
@@ -125,6 +126,7 @@ export function ImportPage() {
       },
       { kind: "clusters", label: "Clustering → playlists" },
       { kind: "lyrics", label: "Lyrics" },
+      { kind: "mb-genres", label: "Artist genres (MusicBrainz)" },
     ]
 
   return (

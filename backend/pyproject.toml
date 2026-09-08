@@ -24,6 +24,7 @@ dependencies = [
     "essentia-tensorflow>=2.1b6.dev1438",
     "langdetect>=1.0.9",
     "faster-whisper>=1.1",
+    "ytmusicapi>=1.12.2",
 ]
 
 [tool.uv.sources]

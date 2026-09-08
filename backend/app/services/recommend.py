@@ -12,9 +12,9 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.db import engine
 from app.models import AudioFeatures, Cluster, Lyrics, Track
+from app.services.musicbrainz import _throttle
 
-MB_API = "https://musicbrainz.org/ws/2/artist"
-MIN_INTERVAL = 1.1
+MB_API = "https://musicbrainz.org/ws/2"
 
 MOOD_TAGS = {
     "Happy": ["pop", "dance"],
@@ -271,7 +271,10 @@ def _load_semantic(
             moodtags[f[0]] = parsed["moodtags"]
     for row in session.exec(
         select(Lyrics.track_id, Lyrics.language, Lyrics.topics, Lyrics.text).where(  # type: ignore[arg-type]
-            Lyrics.track_id.in_(id_set)  # type: ignore[union-attr]
+            Lyrics.track_id.in_(id_set),  # type: ignore[union-attr]
+            # whisper transcripts are often false positives (like the
+            # filters, recommendations trust only real lyrics sources)
+            Lyrics.source != "whisper",
         )
     ).all():
         tid, lang, topics_json, text = row
@@ -361,6 +364,31 @@ def _essentia_similarity(t1: dict[str, any], t2: dict[str, any]) -> float:
     total = w_g * g_sim + w_i * i_sim + w_m * m_sim + w_v * v_sim
     # normalise by sum of weights (they already sum to 1)
     return round(total, 3)
+
+
+def pair_essentia_match(track_a: str, track_b: str) -> float | None:
+    """Essentia-tag similarity 0..1 between any two tracks.
+
+    Unlike similar_tracks_essentia this works for arbitrary pairs
+    (e.g. a history track vs a YouTube radio recommendation).
+    None — either track has no analyzed audio tags.
+    """
+    with Session(engine) as session:
+        f1 = session.get(AudioFeatures, track_a)
+        f2 = session.get(AudioFeatures, track_b)
+    if (
+        f1 is None
+        or f2 is None
+        or f1.source != "audio"
+        or f2.source != "audio"
+    ):
+        return None
+    t1 = _essentia_tags_vec(f1.tags or "")
+    t2 = _essentia_tags_vec(f2.tags or "")
+    for t in (t1, t2):
+        if not any(t["genres"]) and not any(t["instruments"]):
+            return None
+    return _essentia_similarity(t1, t2)
 
 
 def similar_tracks_essentia(
@@ -608,14 +636,6 @@ def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
                 }
             )
         return result
-
-
-def _throttle() -> None:
-    global _last_call
-    wait = _last_call + MIN_INTERVAL - time.monotonic()
-    if wait > 0:
-        time.sleep(wait)
-    _last_call = time.monotonic()
 
 
 def mb_artists_for_tags(tags: list[str], per_tag: int = 8) -> tuple[list[dict], str]:

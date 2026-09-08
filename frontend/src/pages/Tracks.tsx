@@ -16,8 +16,10 @@ import {
 } from "react-router-dom";
 import { Ban, Check, EyeOff } from "lucide-react";
 
-import { api, type TrackListItem, type TrackSort } from "@/lib/api";
+import { api, type TrackSort } from "@/lib/api";
+import { techTooltip } from "@/lib/track";
 import { cn, artistPath } from "@/lib/utils";
+import { LoadingNote } from "@/components/LoadingNote";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,31 +34,6 @@ import {
 
 const GRID =
   "grid grid-cols-[2.25rem_4.25rem_minmax(0,1fr)_10.5rem_4rem_4.5rem_4.5rem_4.5rem_4.5rem_6rem_6rem_4.5rem_5.5rem] items-center gap-1.5 px-1.5";
-
-const REASON_LABELS: [string, string][] = [
-  ["yt-music-app", "played in YouTube Music"],
-  ["topic-channel", "Topic channel"],
-  ["vevo", "VEVO channel"],
-  ["api:cat10", "YouTube API: Music category"],
-  ["api:too-long", "too long (>12 h, radio stream)"],
-  ["api:not-music", "YouTube API: not music"],
-  ["api-miss", "YouTube API: video unavailable"],
-  ["manual", "manually"],
-  ["manual-not-music", "manually: channel hidden"],
-  ["anti-pattern", "anti-pattern in title"],
-  ["no-signal", "no music signals"],
-  ["artist-dash", '"artist - track" title format'],
-  ["channel-music", "music channel (voted)"],
-  ["channel-not-music", "non-music channel (voted)"],
-];
-
-function reasonLabel(reason: string): string {
-  if (!reason) return "—";
-  for (const [prefix, label] of REASON_LABELS) {
-    if (reason.startsWith(prefix)) return label;
-  }
-  return reason;
-}
 
 function formatDuration(seconds: number | null): string {
   if (!seconds) return "—";
@@ -124,42 +101,6 @@ const LANG_LABELS: Record<string, string> = {
 };
 
 const langLabel = (code: string) => LANG_LABELS[code] ?? code;
-
-function techTooltip(t: TrackListItem): string {
-  const parts = [`classification: ${reasonLabel(t.music_reason)}`];
-  if (t.tempo != null) {
-    parts.push(`BPM: ${Math.round(t.tempo ?? 0)}`);
-    parts.push(`brightness: ${(t.brightness ?? 0).toFixed(2)}`);
-    if (t.key) parts.push(`key: ${t.key}`);
-    if (t.loudness != null) parts.push(`loudness: ${t.loudness.toFixed(1)} dB`);
-    if (t.dynamics != null) parts.push(`dynamics: ${t.dynamics.toFixed(2)}`);
-    if (t.vocal_ratio != null)
-      parts.push(`vocals: ${Math.round(t.vocal_ratio * 100)}%`);
-    if (t.has_vocals === false) parts.push("vocals: none (whisper-checked)");
-    if (t.genres?.length) parts.push(`genres: ${t.genres.join(", ")}`);
-    if (t.instruments?.length)
-      parts.push(`instruments: ${t.instruments.join(", ")}`);
-    const moods = [
-      `happiness ${Math.round((t.mood_happy ?? 0) * 100)}%`,
-      `sadness ${Math.round((t.mood_sad ?? 0) * 100)}%`,
-      `calmness ${Math.round((t.mood_relaxed ?? 0) * 100)}%`,
-      `aggression ${Math.round((t.mood_aggressive ?? 0) * 100)}%`,
-      `electronic ${Math.round((t.mood_electronic ?? 0) * 100)}%`,
-      `acoustic ${Math.round((t.mood_acoustic ?? 0) * 100)}%`,
-      `party/danceability ${Math.round((t.mood_party ?? 0) * 100)}%`,
-      `epicness ${Math.round((t.mood_epic ?? 0) * 100)}%`,
-      `darkness ${Math.round((t.mood_dark ?? 0) * 100)}%`,
-      `romance ${Math.round((t.mood_romantic ?? 0) * 100)}%`,
-      `atmospheric ${Math.round((t.mood_atmospheric ?? 0) * 100)}%`,
-    ];
-    parts.push(`mood: ${moods.join(", ")}`);
-    parts.push(
-      `feature source: ${t.features_source === "audio" ? "audio" : "metadata"}`,
-    );
-  }
-  if (t.language) parts.push(`lyrics language: ${t.language}`);
-  return parts.join("\n");
-}
 
 const SORT_COLUMNS: { key: TrackSort; label: string; align?: "right" }[] = [
   { key: "tempo", label: "BPM", align: "right" },
@@ -565,7 +506,7 @@ export function Tracks() {
           </p>
         )}
 
-        {isPending && <p className="text-muted-foreground">Loading…</p>}
+        {isPending && <LoadingNote />}
         {isError && <p>Failed to load data.</p>}
 
         {data && total === 0 && !q && (
@@ -705,7 +646,7 @@ export function Tracks() {
                       </a>
                       <Link
                         to={artistPath(t.artist ?? t.channel)}
-                        className="text-muted-foreground block truncate text-xs hover:underline"
+                        className="text-muted-foreground block truncate text-xs hover:underline max-w-fit"
                       >
                         {t.channel}
                       </Link>
@@ -719,7 +660,10 @@ export function Tracks() {
                         <span className="text-muted-foreground">—</span>
                       )}
                       {t.genres?.[0] && (
-                        <Badge variant="secondary" className="max-w-full font-normal">
+                        <Badge
+                          variant="secondary"
+                          className="max-w-full font-normal"
+                        >
                           <span className="truncate">
                             {genreLabel(t.genres[0])}
                             {t.language ? ` · ${t.language}` : ""}
@@ -727,7 +671,10 @@ export function Tracks() {
                         </Badge>
                       )}
                       {!t.genres?.length && t.language && (
-                        <Badge variant="secondary" className="max-w-full font-normal">
+                        <Badge
+                          variant="secondary"
+                          className="max-w-full font-normal"
+                        >
                           <span className="truncate">{t.language}</span>
                         </Badge>
                       )}
@@ -813,9 +760,7 @@ export function Tracks() {
             ref={sentinelRef}
             className="flex h-10 items-center justify-center"
           >
-            {isFetchingNextPage && (
-              <span className="text-muted-foreground text-sm">Loading…</span>
-            )}
+            {isFetchingNextPage && <LoadingNote size="sm" />}
             {!hasNextPage && (
               <span className="text-muted-foreground text-sm">
                 All {total.toLocaleString("en-US")} tracks loaded

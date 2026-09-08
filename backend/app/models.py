@@ -100,3 +100,37 @@ class AppMeta(SQLModel, table=True):
     __tablename__ = "appmeta"
     key: str = Field(primary_key=True)
     value: str = ""
+
+
+class YtmMeta(SQLModel, table=True):
+    __tablename__ = "ytm_meta"
+    # extra track metadata from YouTube Music catalog (get_song)
+    track_id: str = Field(primary_key=True, foreign_key="track.video_id")
+    album: str = ""
+    album_id: str = ""
+    year: str = ""
+    # json list of {name, id}
+    artists: str = "[]"
+    # json list of {url, width, height}
+    thumbnails: str = "[]"
+    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class YtmSimilar(SQLModel, table=True):
+    __tablename__ = "ytm_similar"
+    # YouTube-native "radio" recommendations seeded by this track
+    seed_video_id: str = Field(primary_key=True, foreign_key="track.video_id")
+    # json list of {video_id, title, artist, album, thumbnail, duration}
+    payload: str = "[]"
+    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MbArtist(SQLModel, table=True):
+    __tablename__ = "mb_artist"
+    # MusicBrainz artist info (genres/tags/country/life span), keyed by the
+    # canonical artist name; empty mbid = "not found" miss (shorter TTL)
+    name: str = Field(primary_key=True)
+    mbid: str = ""
+    # json: {name, disambiguation, country, type, life_span, genres, tags}
+    payload: str = "[]"
+    fetched_at: datetime = Field(default_factory=datetime.utcnow)

@@ -1,5 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
 import {
@@ -12,8 +17,10 @@ import {
   RadarChart,
 } from "recharts";
 
-import { api } from "@/lib/api";
-import { artistPath } from "@/lib/utils";
+import { api, type YtmSimilarTrack } from "@/lib/api";
+import { techTooltip } from "@/lib/track";
+import { artistPath, cn } from "@/lib/utils";
+import { LoadingNote } from "@/components/LoadingNote";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -96,105 +103,89 @@ function Stat({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-function RadarCard({
-  title,
+function RadarBlock({
   data,
   color,
 }: {
-  title: string;
   data: { axis: string; value: number }[];
   color: string;
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ChartContainer
-          config={{ value: { label: "value" } }}
-          className="aspect-auto h-64 w-full"
-        >
-          <RadarChart data={data}>
-            <PolarGrid />
-            <PolarAngleAxis dataKey="axis" />
-            <ChartTooltip content={<ChartTooltipContent />} />
-            <Radar
-              dataKey="value"
-              stroke={color}
-              fill={color}
-              fillOpacity={0.35}
-            />
-          </RadarChart>
-        </ChartContainer>
-      </CardContent>
-    </Card>
+    <ChartContainer
+      config={{ value: { label: "value" } }}
+      className="aspect-auto h-48 w-full"
+    >
+      <RadarChart data={data}>
+        <PolarGrid />
+        <PolarAngleAxis dataKey="axis" />
+        <ChartTooltip content={<ChartTooltipContent />} />
+        <Radar
+          dataKey="value"
+          stroke={color}
+          fill={color}
+          fillOpacity={0.35}
+        />
+      </RadarChart>
+    </ChartContainer>
   );
 }
 
-function DonutCard({
-  title,
+function DonutBlock({
   data,
   unit,
   legendCols = 1,
 }: {
-  title: string
-  data: { name: string; value: number }[]
-  unit: string
-  legendCols?: 1 | 2
+  data: { name: string; value: number }[];
+  unit: string;
+  legendCols?: 1 | 2;
 }) {
-  const total = data.reduce((s, d) => s + d.value, 0)
+  const total = data.reduce((s, d) => s + d.value, 0);
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col items-center gap-2 sm:flex-row sm:items-center sm:gap-4">
-        <div className="relative shrink-0">
-          <ChartContainer
-            config={{ value: { label: "weight" } }}
-            className="aspect-auto h-40 w-40"
-          >
-            <PieChart>
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Pie
-                data={data}
-                dataKey="value"
-                nameKey="name"
-                innerRadius="55%"
-                outerRadius="85%"
-                paddingAngle={2}
-              >
-                {data.map((g, i) => (
-                  <Cell key={g.name} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                ))}
-              </Pie>
-            </PieChart>
-          </ChartContainer>
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-            <span className="text-lg font-bold text-black">{data.length}</span>
-            <span className="text-muted-foreground text-xs">{unit}</span>
-          </div>
-        </div>
-        <ul
-          className={`grid flex-1 gap-x-6 gap-y-1 ${legendCols === 2 ? "sm:grid-cols-2" : ""}`}
+    <div className="flex flex-col items-center gap-2 sm:flex-row sm:items-center sm:gap-4">
+      <div className="relative shrink-0">
+        <ChartContainer
+          config={{ value: { label: "weight" } }}
+          className="aspect-auto h-40 w-40"
         >
-          {data.map((g, i) => (
-            <li key={g.name} className="flex items-center gap-1.5 text-xs">
-              <span
-                className="inline-block h-2.5 w-2.5 shrink-0 border border-[#666666]"
-                style={{ background: PIE_COLORS[i % PIE_COLORS.length] }}
-              />
-              <span className="min-w-0 flex-1 truncate">{g.name}</span>
-              <span className="tabular-nums">
-                {Math.round((g.value / total) * 100)}%
-              </span>
-            </li>
-          ))}
-        </ul>
-      </CardContent>
-    </Card>
-  )
+          <PieChart>
+            <ChartTooltip content={<ChartTooltipContent />} />
+            <Pie
+              data={data}
+              dataKey="value"
+              nameKey="name"
+              innerRadius="55%"
+              outerRadius="85%"
+              paddingAngle={2}
+            >
+              {data.map((g, i) => (
+                <Cell key={g.name} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+              ))}
+            </Pie>
+          </PieChart>
+        </ChartContainer>
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-lg font-bold text-black">{data.length}</span>
+          <span className="text-muted-foreground text-xs">{unit}</span>
+        </div>
+      </div>
+      <ul
+        className={`grid flex-1 gap-x-6 gap-y-1 ${legendCols === 2 ? "sm:grid-cols-2" : ""}`}
+      >
+        {data.map((g, i) => (
+          <li key={g.name} className="flex items-center gap-1.5 text-xs">
+            <span
+              className="inline-block h-2.5 w-2.5 shrink-0 border border-[#666666]"
+              style={{ background: PIE_COLORS[i % PIE_COLORS.length] }}
+            />
+            <span className="min-w-0 flex-1 truncate">{g.name}</span>
+            <span className="tabular-nums">
+              {Math.round((g.value / total) * 100)}%
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function SimilarRow({
@@ -215,26 +206,48 @@ function SimilarRow({
   const sim = maxD > 0 ? 0.5 + 0.5 * (1 - item.distance / maxD) : 1;
   const pct = Math.round(sim * 100);
   const hue = 45 + (142 - 45) * ((sim - 0.5) * 2);
+  const extras: string[] = [];
+  if (item.tempo != null) extras.push(`BPM: ${Math.round(item.tempo)}`);
+  extras.push(`distance: ${item.distance.toFixed(3)} (lower = more similar)`);
+  if (showMatch && item.match) extras.push(`match: ${item.match}`);
   return (
     <li
       className="hover:bg-[#ffffcc] flex cursor-pointer items-center gap-1.5 border-b border-[#e0e0e0] px-1 py-1 last:border-b-0"
-      title={`distance: ${item.distance}`}
-      onClick={onOpen}
+      title={techTooltip(item.track, extras)}
+      onClick={(e) => {
+        if (e.target instanceof HTMLElement && e.target.closest("a")) return;
+        onOpen();
+      }}
     >
       <span className="text-muted-foreground w-5 shrink-0 text-right text-xs tabular-nums">
         {index + 1}
       </span>
-      <img
-        src={`https://i.ytimg.com/vi/${item.track.video_id}/mqdefault.jpg`}
-        alt=""
-        loading="lazy"
-        className="h-8 w-[52px] shrink-0 border border-[#999999] object-cover"
-      />
+      <a
+        href={`https://www.youtube.com/watch?v=${item.track.video_id}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="shrink-0"
+      >
+        <img
+          src={`https://i.ytimg.com/vi/${item.track.video_id}/mqdefault.jpg`}
+          alt=""
+          loading="lazy"
+          className="h-8 w-[52px] shrink-0 border border-[#999999] object-cover"
+        />
+      </a>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm">{item.track.title}</span>
+        <a
+          href={`https://www.youtube.com/watch?v=${item.track.video_id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block truncate text-sm hover:underline max-w-fit"
+          title={item.track.title}
+        >
+          {item.track.title}
+        </a>
         <Link
           to={artistPath(item.track.artist ?? item.track.channel)}
-          className="text-muted-foreground block truncate text-xs hover:underline"
+          className="text-muted-foreground block truncate text-xs hover:underline max-w-fit"
         >
           {item.track.channel}
         </Link>
@@ -260,14 +273,220 @@ function SimilarRow({
           style={{ width: `${pct}%`, background: `hsl(${hue} 70% 45%)` }}
         />
       </span>
+      <span
+        className="text-muted-foreground w-10 shrink-0 text-right text-xs tabular-nums"
+        title="distance (lower = more similar)"
+      >
+        {item.distance.toFixed(3)}
+      </span>
     </li>
+  );
+}
+
+const YTM_GRID =
+  "grid grid-cols-[2.25rem_4.25rem_minmax(0,1fr)_10.5rem_4rem_4.5rem_4.5rem_4.5rem_4.5rem_4rem_4rem_3.5rem_4.5rem] items-center gap-1.5 px-1.5";
+
+function YtmRow({
+  item,
+  index,
+  onOpen,
+  hasHistory,
+}: {
+  item: YtmSimilarTrack;
+  index: number;
+  onOpen: () => void;
+  hasHistory: boolean | undefined;
+}) {
+  const info = item.in_history ? (item.info ?? null) : null;
+  const extras: string[] = [];
+  if (info) {
+    if (info.genre) extras.push(`genre: ${info.genre}`);
+    extras.push(
+      `first: ${info.first_listen ?? "—"} · last: ${info.last_listen ?? "—"}`,
+    );
+  }
+  const tooltip = info
+    ? techTooltip(
+        {
+          tempo: info.tempo,
+          energy: info.energy,
+          danceability: info.danceability,
+          acousticness: info.acousticness,
+          language: info.language,
+        },
+        extras,
+      )
+    : "";
+  return (
+    <div
+      className={cn(
+        YTM_GRID,
+        "h-12 min-w-[62rem] hover:bg-[#ffffcc] border-b border-[#e0e0e0]",
+        hasHistory ? "cursor-pointer" : "",
+      )}
+      title={tooltip || undefined}
+      onClick={(e) => {
+        if (e.target instanceof HTMLElement && e.target.closest("a")) return;
+        onOpen();
+      }}
+    >
+      <span className="text-muted-foreground tabular-nums">{index + 1}</span>
+      <a
+        href={`https://www.youtube.com/watch?v=${item.video_id}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="shrink-0"
+      >
+        <img
+          src={`https://i.ytimg.com/vi/${item.video_id}/mqdefault.jpg`}
+          alt=""
+          loading="lazy"
+          className="h-10 w-[71px] shrink-0 border border-[#999999] object-cover"
+        />
+      </a>
+      <span className="min-w-0">
+        <a
+          href={`https://www.youtube.com/watch?v=${item.video_id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block truncate text-sm hover:underline max-w-fit"
+          title={item.title}
+        >
+          {item.title}
+        </a>
+        {item.artist ? (
+          <Link
+            to={artistPath(item.artist)}
+            className="text-muted-foreground block truncate text-xs hover:underline max-w-fit"
+          >
+            {item.artist}
+          </Link>
+        ) : (
+          <span className="text-muted-foreground block truncate text-xs">
+            {"\u00a0"}
+          </span>
+        )}
+      </span>
+      <span className="flex min-w-0 flex-col items-start gap-0.5 overflow-hidden">
+        {info?.cluster ? (
+          <Badge variant="outline" className="max-w-full">
+            <span className="truncate">{info.cluster}</span>
+          </Badge>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+        {(info?.genre || info?.language) && (
+          <Badge variant="secondary" className="max-w-full font-normal">
+            <span className="truncate">
+              {[info?.genre, info?.language].filter(Boolean).join(" · ")}
+            </span>
+          </Badge>
+        )}
+      </span>
+      <span className="text-right text-sm tabular-nums">
+        {info?.tempo != null ? Math.round(info.tempo) : "—"}
+      </span>
+      <span className="text-muted-foreground text-right text-sm tabular-nums">
+        {info?.energy != null ? info.energy.toFixed(2) : "—"}
+      </span>
+      <span className="text-muted-foreground text-right text-sm tabular-nums">
+        {info?.danceability != null ? info.danceability.toFixed(2) : "—"}
+      </span>
+      <span className="text-muted-foreground text-right text-sm tabular-nums">
+        {info?.acousticness != null ? info.acousticness.toFixed(2) : "—"}
+      </span>
+      <span className="text-right text-sm tabular-nums">
+        {info ? info.play_count : "—"}
+      </span>
+      <span
+        className="text-right text-sm tabular-nums"
+        title={
+          info?.match != null
+            ? "audio similarity to this track (essentia tags)"
+            : undefined
+        }
+      >
+        {info?.match != null ? `${info.match}%` : "—"}
+      </span>
+      <span
+        className="text-muted-foreground text-right text-sm tabular-nums"
+        title="essentia distance to this track (lower = more similar)"
+      >
+        {info?.match != null ? ((100 - info.match) / 100).toFixed(3) : "—"}
+      </span>
+      <span className="text-center text-xs">
+        {item.in_history ? (
+          <span
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-600 text-[11px] font-bold text-white"
+            title="In your history"
+          >
+            ✓
+          </span>
+        ) : (
+          ""
+        )}
+      </span>
+      <span className="text-muted-foreground text-right text-sm tabular-nums">
+        {fmtDuration(info?.duration ?? item.duration)}
+      </span>
+    </div>
+  );
+}
+
+function YtmTable({
+  items,
+  onOpen,
+}: {
+  items: YtmSimilarTrack[];
+  onOpen: (item: YtmSimilarTrack) => void;
+}) {
+  return (
+    <div className="overflow-x-auto border border-[#999999]">
+      <div>
+        <div
+          className={cn(
+            YTM_GRID,
+            "h-12 min-w-[62rem] border-b border-[#999999] bg-[#eeeeee] text-xs font-bold text-black whitespace-nowrap",
+          )}
+        >
+          <span>#</span>
+          <span />
+          <span>Track</span>
+          <span>Mood</span>
+          <span className="text-right">BPM</span>
+          <span className="text-right">energy</span>
+          <span className="text-right">dance.</span>
+          <span className="text-right">acoust.</span>
+          <span className="text-right">plays</span>
+          <span className="text-right">match</span>
+          <span className="text-right">dist.</span>
+          <span className="text-center">hist.</span>
+          <span className="text-right">length</span>
+        </div>
+        <div>
+          {items.map((s, i) => (
+            <YtmRow
+              key={`${s.video_id}-${i}`}
+              item={s}
+              index={i}
+              onOpen={() => onOpen(s)}
+              hasHistory={s.in_history}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
 export function TrackCard() {
   const { videoId } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [showLyrics, setShowLyrics] = useState(false);
+  // on-demand analysis of an un-analyzed track
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState("");
 
   // remember the last opened track: the tracks list scrolls back to it
   // on browser Back
@@ -297,10 +516,21 @@ export function TrackCard() {
     enabled: !!videoId,
   });
 
+  const { data: ytmData } = useQuery({
+    queryKey: ["youtube-similar", videoId],
+    queryFn: () => api.youtubeSimilar(videoId!),
+    enabled: !!videoId,
+    staleTime: 5 * 60 * 1000,
+  });
+  const ytmItems = ytmData?.enabled ? ytmData.similar : [];
+  const [ytmShown, setYtmShown] = useState(10);
+  useEffect(() => setYtmShown(10), [videoId]);
+  const ytmVisible = ytmItems.slice(0, ytmShown);
+
   const essentiaQuery = useInfiniteQuery({
     queryKey: ["essentia-recommendations", videoId],
     queryFn: ({ pageParam = 0 }) =>
-      api.recommendationsEssentia(videoId!, pageParam, 6),
+      api.recommendationsEssentia(videoId!, pageParam, 10),
     initialPageParam: 0,
     enabled: !!videoId,
     getNextPageParam: (lastPage, allPages) => {
@@ -312,7 +542,7 @@ export function TrackCard() {
   const similarQuery = useInfiniteQuery({
     queryKey: ["similar-recommendations", videoId],
     queryFn: ({ pageParam = 0 }) =>
-      api.recommendationsSimilar(videoId!, pageParam, 6),
+      api.recommendationsSimilar(videoId!, pageParam, 10),
     initialPageParam: 0,
     enabled: !!videoId,
     getNextPageParam: (lastPage, allPages) => {
@@ -333,7 +563,43 @@ export function TrackCard() {
     ? Math.max(...essentiaItems.map((x) => x.distance))
     : 0;
 
-  if (isLoading) return <p className="text-muted-foreground">Loading…</p>;
+  const analyzeOne = useMutation({
+    mutationFn: () => api.analyzeTrack(videoId!),
+    onSuccess: () => {
+      setAnalyzeError("");
+      setAnalyzing(true);
+    },
+    onError: (e) => {
+      setAnalyzing(false);
+      setAnalyzeError(e.message);
+    },
+  });
+
+  const { data: analyzeStatus } = useQuery({
+    queryKey: ["analyze-status", videoId],
+    queryFn: () => api.analyzeStatus(videoId!),
+    enabled: !!videoId && analyzing,
+    refetchInterval: 3000,
+  });
+
+  useEffect(() => {
+    if (!analyzing) return;
+    if (analyzeStatus?.status === "done") {
+      setAnalyzing(false);
+      // fresh features + ytm meta/similar + recommendations everywhere
+      queryClient.invalidateQueries();
+    } else if (analyzeStatus?.status === "error") {
+      setAnalyzing(false);
+      setAnalyzeError(analyzeStatus.detail || "analysis failed");
+    }
+  }, [analyzing, analyzeStatus, queryClient]);
+
+  if (isLoading)
+    return (
+      <div className="flex justify-center py-10">
+        <LoadingNote />
+      </div>
+    );
   if (isError || !t)
     return (
       <div className="flex flex-col gap-4">
@@ -370,12 +636,6 @@ export function TrackCard() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
-          ← Back
-        </Button>
-      </div>
-
       {/* Header */}
       <Card>
         <CardContent className="flex items-start gap-3">
@@ -428,6 +688,12 @@ export function TrackCard() {
                     {t.language}
                   </Badge>
                 )}
+                {t.ytm?.album && (
+                  <Badge variant="outline" className="px-1.5 py-0 text-xs">
+                    {t.ytm.album}
+                    {t.ytm.year ? ` · ${t.ytm.year}` : ""}
+                  </Badge>
+                )}
                 {t.sentiment != null && (
                   <Badge variant="outline" className="px-1.5 py-0 text-xs">
                     sentiment: {t.sentiment > 0 ? "+" : ""}
@@ -455,34 +721,68 @@ export function TrackCard() {
         </CardContent>
       </Card>
 
-      {/* Charts */}
+      {/* Charts: radars on the left, tag donuts on the right;
+          both cards stretch to the same height */}
       {hasFeatures ? (
         <div className="grid gap-3 md:grid-cols-2">
-          <RadarCard title="Moods" data={moodData} color="var(--chart-1)" />
-          <RadarCard
-            title="Features"
-            data={featureData}
-            color="var(--chart-2)"
-          />
-          {genreData.length > 0 && (
-            <DonutCard title="Genres" data={genreData} unit="genres" />
-          )}
-          {instrumentData.length > 0 && (
-            <DonutCard
-              title="Instruments"
-              data={instrumentData}
-              unit="instruments"
-              legendCols={2}
-            />
+          <Card className="flex flex-col">
+            <CardHeader className="p-4 pb-2">
+              <CardTitle>Moods &amp; Features</CardTitle>
+            </CardHeader>
+            <CardContent className="grid flex-1 content-start gap-3 p-4 pt-0 sm:grid-cols-2">
+              <RadarBlock data={moodData} color="var(--chart-1)" />
+              <RadarBlock data={featureData} color="var(--chart-2)" />
+            </CardContent>
+          </Card>
+          {(genreData.length > 0 || instrumentData.length > 0) && (
+            <Card className="flex flex-col">
+              <CardHeader className="p-4 pb-2">
+                <CardTitle>Genres &amp; Instruments</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-1 flex-col content-start gap-3 p-4 pt-0">
+                {genreData.length > 0 && (
+                  <DonutBlock data={genreData} unit="genres" />
+                )}
+                {instrumentData.length > 0 && (
+                  <DonutBlock
+                    data={instrumentData}
+                    unit="instruments"
+                    legendCols={2}
+                  />
+                )}
+              </CardContent>
+            </Card>
           )}
         </div>
       ) : (
-        <Alert>
-          <AlertDescription>
-            Track not analyzed yet — run "Audio analysis" on the import page to
-            see moods, genres, and instruments.
-          </AlertDescription>
-        </Alert>
+        <Card>
+          <CardHeader>
+            <CardTitle>Not analyzed yet</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            <p className="text-muted-foreground text-sm">
+              This track has no audio analysis. Analyze it right here, or use
+              the batch "Audio analysis" job on the import page.
+            </p>
+            {analyzing ? (
+              <LoadingNote size="sm" />
+            ) : (
+              <Button
+                size="sm"
+                className="w-fit"
+                disabled={analyzeOne.isPending}
+                onClick={() => analyzeOne.mutate()}
+              >
+                Analyze this track
+              </Button>
+            )}
+            {analyzeError && (
+              <Alert variant="destructive">
+                <AlertDescription>{analyzeError}</AlertDescription>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {/* Lyrics */}
@@ -518,113 +818,149 @@ export function TrackCard() {
         </Card>
       )}
 
-      {/* Similar tracks (v2 + Essentia side by side) */}
-      <div className="grid gap-3 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Similar tracks</CardTitle>
-            <CardDescription className="text-xs">
-              weighted metric: timbre · rhythm · harmony · character ·
-              instruments · genre · lyrics · themes
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {similarQuery.isPending ? (
-              <p className="text-muted-foreground text-sm">
-                Finding similar tracks…
-              </p>
-            ) : similarItems.length > 0 ? (
-              <>
-                <ul className="flex flex-col">
-                  {similarItems.map((s, i) => (
-                    <SimilarRow
-                      key={s.track.video_id}
-                      item={s}
-                      index={i}
-                      maxD={similarMaxD}
-                      showMatch={false}
-                      onOpen={() => navigate(`/track/${s.track.video_id}`)}
-                    />
-                  ))}
-                </ul>
-                {similarQuery.hasNextPage ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-2 w-full"
-                    disabled={similarQuery.isFetchingNextPage}
-                    onClick={() => similarQuery.fetchNextPage()}
-                  >
-                    {similarQuery.isFetchingNextPage
-                      ? "Loading…"
-                      : `Show more (${similarTotal - similarItems.length})`}
-                  </Button>
-                ) : (
-                  <p className="text-muted-foreground py-1.5 text-center text-xs">
-                    showing all {similarTotal} tracks
-                  </p>
-                )}
-              </>
-            ) : (
-              <p className="text-muted-foreground text-sm">
-                Not enough analyzed tracks to compare.
-              </p>
-            )}
-          </CardContent>
-        </Card>
+      {/* Similar tracks (v2 + Essentia + YouTube, stacked) */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Similar tracks</CardTitle>
+          <CardDescription className="text-xs">
+            weighted metric: timbre · rhythm · harmony · character · instruments
+            · genre · lyrics · themes
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {similarQuery.isPending ? (
+            <LoadingNote size="sm" />
+          ) : similarItems.length > 0 ? (
+            <>
+              <ul className="flex flex-col">
+                {similarItems.map((s, i) => (
+                  <SimilarRow
+                    key={s.track.video_id}
+                    item={s}
+                    index={i}
+                    maxD={similarMaxD}
+                    showMatch={false}
+                    onOpen={() => navigate(`/track/${s.track.video_id}`)}
+                  />
+                ))}
+              </ul>
+              {similarQuery.hasNextPage ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 w-full"
+                  disabled={similarQuery.isFetchingNextPage}
+                  onClick={() => similarQuery.fetchNextPage()}
+                >
+                  {similarQuery.isFetchingNextPage
+                    ? "Loading…"
+                    : `Show more (${similarTotal - similarItems.length})`}
+                </Button>
+              ) : (
+                <p className="text-muted-foreground py-1.5 text-center text-xs">
+                  showing all {similarTotal} tracks
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-muted-foreground text-sm">
+              Not enough analyzed tracks to compare.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Similar tracks (Essentia)</CardTitle>
+          <CardDescription className="text-xs">
+            genres · instruments · moods · vocals · {essentiaTotal} total
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {essentiaQuery.isPending ? (
+            <LoadingNote size="sm" />
+          ) : essentiaItems.length > 0 ? (
+            <>
+              <ul className="flex flex-col">
+                {essentiaItems.map((s, i) => (
+                  <SimilarRow
+                    key={`${s.track.video_id}-${i}`}
+                    item={s}
+                    index={i}
+                    maxD={essentiaMaxD}
+                    showMatch
+                    onOpen={() => navigate(`/track/${s.track.video_id}`)}
+                  />
+                ))}
+              </ul>
+              {essentiaQuery.hasNextPage ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 w-full"
+                  disabled={essentiaQuery.isFetchingNextPage}
+                  onClick={() => essentiaQuery.fetchNextPage()}
+                >
+                  {essentiaQuery.isFetchingNextPage
+                    ? "Loading…"
+                    : `Show more (${essentiaTotal - essentiaItems.length})`}
+                </Button>
+              ) : (
+                <p className="text-muted-foreground py-1.5 text-center text-xs">
+                  showing all {essentiaTotal} tracks
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-muted-foreground text-sm">
+              No essentia tag data for this track.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Similar tracks from YouTube Music (native radio) */}
+      {ytmData?.enabled && (
         <Card>
           <CardHeader>
-            <CardTitle>Similar tracks (Essentia)</CardTitle>
+            <CardTitle>Similar tracks (YouTube)</CardTitle>
             <CardDescription className="text-xs">
-              genres · instruments · moods · vocals · {essentiaTotal} total
+              YouTube Music radio seeded by this track · {ytmItems.length} total
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {essentiaQuery.isPending ? (
-              <p className="text-muted-foreground text-sm">
-                Finding similar tracks…
-              </p>
-            ) : essentiaItems.length > 0 ? (
+            {ytmVisible.length > 0 ? (
               <>
-                <ul className="flex flex-col">
-                  {essentiaItems.map((s, i) => (
-                    <SimilarRow
-                      key={`${s.track.video_id}-${i}`}
-                      item={s}
-                      index={i}
-                      maxD={essentiaMaxD}
-                      showMatch
-                      onOpen={() => navigate(`/track/${s.track.video_id}`)}
-                    />
-                  ))}
-                </ul>
-                {essentiaQuery.hasNextPage ? (
+                <YtmTable
+                  items={ytmVisible}
+                  onOpen={(s) =>
+                    s.in_history ? navigate(`/track/${s.video_id}`) : null
+                  }
+                />
+                {ytmShown < ytmItems.length ? (
                   <Button
                     variant="outline"
                     size="sm"
                     className="mt-2 w-full"
-                    disabled={essentiaQuery.isFetchingNextPage}
-                    onClick={() => essentiaQuery.fetchNextPage()}
+                    onClick={() => setYtmShown((v) => v + 10)}
                   >
-                    {essentiaQuery.isFetchingNextPage
-                      ? "Loading…"
-                      : `Show more (${essentiaTotal - essentiaItems.length})`}
+                    Show more ({ytmItems.length - ytmShown})
                   </Button>
                 ) : (
                   <p className="text-muted-foreground py-1.5 text-center text-xs">
-                    showing all {essentiaTotal} tracks
+                    showing all {ytmItems.length} tracks
                   </p>
                 )}
               </>
             ) : (
               <p className="text-muted-foreground text-sm">
-                No essentia tag data for this track.
+                YouTube Music has no similar tracks for this video.
               </p>
             )}
           </CardContent>
         </Card>
-      </div>
+      )}
 
       {/* Similar artists */}
       {recs?.similar_artists && recs.similar_artists.length > 0 && (

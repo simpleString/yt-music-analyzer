@@ -19,6 +19,7 @@ export type JobKind =
   | "audio"
   | "clusters"
   | "lyrics"
+  | "mb-genres"
 export type JobStatus =
   | "pending"
   | "running"
@@ -99,6 +100,7 @@ export interface TrackDetail {
   mood_dark?: number | null
   mood_romantic?: number | null
   mood_atmospheric?: number | null
+  ytm?: YtmMeta | null
 }
 
 export interface TrackListItem {
@@ -169,6 +171,29 @@ export interface ArtistTopTrack {
   plays: number
 }
 
+export interface MbLifeSpan {
+  begin: string
+  end: string
+  ended: boolean
+}
+
+export interface MbTag {
+  name: string
+  count: number
+}
+
+export interface MbInfo {
+  mbid: string
+  name: string
+  disambiguation: string
+  country: string
+  area: string
+  type: string
+  life_span: MbLifeSpan
+  genres: MbTag[]
+  tags: MbTag[]
+}
+
 export interface ArtistSummary {
   name: string
   plays: number
@@ -176,6 +201,7 @@ export interface ArtistSummary {
   first_listen: string | null
   last_listen: string | null
   top_track: ArtistTopTrack
+  mb: MbInfo | null
 }
 
 export interface ClusterOption {
@@ -206,6 +232,8 @@ export interface ArtistListItem {
   plays: number
   tracks: number
   last_listen: string | null
+  genre?: string
+  top_video_id?: string
 }
 
 export interface TopTrack {
@@ -289,6 +317,45 @@ export interface EssentiaSimilarTrack {
   track: TrackInfo
   distance: number
   match: string
+}
+
+export interface YtmMeta {
+  album: string
+  year: string
+  artists: { name: string }[]
+  thumbnail: string
+}
+
+export interface YtmHistoryInfo {
+  play_count: number
+  cluster: string
+  genre: string
+  language: string
+  first_listen: string | null
+  last_listen: string | null
+  duration: number | null
+  tempo?: number | null
+  energy?: number | null
+  danceability?: number | null
+  acousticness?: number | null
+  match?: number
+}
+
+export interface YtmSimilarTrack {
+  video_id: string
+  title: string
+  artist: string
+  album: string
+  year: string
+  thumbnail: string
+  duration: number | null
+  in_history?: boolean
+  info?: YtmHistoryInfo | null
+}
+
+export interface YtmSimilarData {
+  enabled: boolean
+  similar: YtmSimilarTrack[]
 }
 
 export interface SettingsField {
@@ -407,6 +474,10 @@ export const api = {
     getJson<SimilarRecommendationsData>(
       `/api/recommendations/similar?track_id=${encodeURIComponent(trackId)}&offset=${offset}&limit=${limit}`
     ),
+  youtubeSimilar: (videoId: string) =>
+    getJson<YtmSimilarData>(
+      `/api/tracks/${encodeURIComponent(videoId)}/youtube-similar`
+    ),
   importFile: (file: File) => {
     const form = new FormData()
     form.append("file", file)
@@ -419,6 +490,7 @@ export const api = {
     postJson<{ ok: boolean; reset: number }>("/api/pipeline/audio-retry", {}),
   runClusters: () => postForm("/api/pipeline/clusters", new FormData()),
   runLyrics: () => postForm("/api/pipeline/lyrics", new FormData()),
+  runMbGenres: () => postForm("/api/pipeline/mb-genres", new FormData()),
   cancelJob: (kind: string) =>
     postJson(`/api/jobs/${encodeURIComponent(kind)}/cancel`, {}),
   trackDetail: (videoId: string) =>
@@ -426,6 +498,15 @@ export const api = {
   trackLyrics: (videoId: string) =>
     getJson<{ track_id: string; text: string; synced: boolean; source: string; language: string; sentiment: number }>(
       `/api/tracks/${encodeURIComponent(videoId)}/lyrics`
+    ),
+  analyzeTrack: (videoId: string) =>
+    postJson<{ ok: boolean; status: string }>(
+      `/api/tracks/${encodeURIComponent(videoId)}/analyze`,
+      {}
+    ),
+  analyzeStatus: (videoId: string) =>
+    getJson<{ status?: string; detail?: string }>(
+      `/api/tracks/${encodeURIComponent(videoId)}/analyze-status`
     ),
   settings: () => getJson<{ fields: SettingsField[] }>("/api/settings"),
   saveSettings: (values: SettingsValues) =>

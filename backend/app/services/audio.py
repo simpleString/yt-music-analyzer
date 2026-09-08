@@ -8,7 +8,7 @@ from concurrent.futures import (
     ThreadPoolExecutor,
     wait,
 )
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -23,6 +23,7 @@ from app.db import engine
 from app.models import AppMeta, AudioFeatures, Track
 from app.services import jobs
 from app.services import essentia_feats, essentia_tags
+from app.services.clustering import MOOD_COLS
 
 SR = 22050
 ANALYZE_SECONDS = 120.0
@@ -541,6 +542,22 @@ def _process_track(
         return status, feats, err, False
 
 
+def _apply_mood_columns(row: AudioFeatures, tags_json: str) -> None:
+    """Fill the mood_* columns from the Essentia tags — the same values
+    the clustering stage (compute_moods) derives. Done at analysis time
+    so the track card shows correct moods without waiting for a
+    clustering re-run."""
+    if not tags_json:
+        return
+    try:
+        moods = json.loads(tags_json).get("moods") or {}
+    except (ValueError, TypeError):
+        return
+    for col in MOOD_COLS:
+        if moods.get(col) is not None:
+            setattr(row, col, round(float(moods[col]), 3))
+
+
 def _save_features(track_id: str, feats: dict) -> None:
     with Session(engine) as session:
         row = session.get(AudioFeatures, track_id)
@@ -564,6 +581,7 @@ def _save_features(track_id: str, feats: dict) -> None:
         row.vocal_ratio = feats["vocal_ratio"]
         row.embedding = feats.get("embedding", "")
         row.feat_version = FEAT_VERSION
+        _apply_mood_columns(row, feats["tags"])
         session.add(row)
         # track duration from real audio, if not yet known
         track = session.get(Track, track_id)
@@ -849,3 +867,106 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
     except Exception as exc:  # noqa: BLE001
         jobs.fail_job("audio", f"{type(exc).__name__}: {exc}")
         raise
+
+
+# --- on-demand analysis of a single track (button in the track card) ---
+
+SINGLE_KEY_PREFIX = "analyze_one"
+SINGLE_STALE_AFTER = timedelta(minutes=30)
+# only one manual analysis at a time (downloads/models are shared state)
+_single_lock = threading.Lock()
+
+
+def _set_one_status(video_id: str, status: str, detail: str = "") -> None:
+    with Session(engine) as session:
+        session.merge(
+            AppMeta(
+                key=f"{SINGLE_KEY_PREFIX}:{video_id}",
+                value=json.dumps(
+                    {
+                        "status": status,
+                        "detail": detail,
+                        "updated_at": datetime.utcnow().isoformat(),
+                    }
+                ),
+            )
+        )
+        session.commit()
+
+
+def analyze_one_status(video_id: str) -> dict:
+    """Manual analysis state for the track card UI: {} (never run),
+    {status: running|done|error, detail}."""
+    with Session(engine) as session:
+        row = session.get(AppMeta, f"{SINGLE_KEY_PREFIX}:{video_id}")
+    if row is None:
+        return {}
+    try:
+        data = json.loads(row.value)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    if data.get("status") == "running":
+        # the thread died with a server restart — do not spin forever
+        try:
+            started = datetime.fromisoformat(str(data.get("updated_at")))
+            if datetime.utcnow() - started > SINGLE_STALE_AFTER:
+                return {
+                    "status": "error",
+                    "detail": "analysis stalled (server restarted?)",
+                }
+        except (ValueError, TypeError):
+            pass
+    return data
+
+
+def analyze_track_now(video_id: str) -> tuple[bool, str]:
+    """Download (if needed) and analyze one track on demand.
+    Runs in a background thread; the UI polls analyze_one_status()."""
+    if not _single_lock.acquire(blocking=False):
+        return False, "another manual analysis is already running"
+    try:
+        _set_one_status(video_id, "running")
+        try:
+            ensure_pot_server()
+            _prepare_cookies()
+            essentia_tags.ensure_models()
+            essentia_feats.ensure_models()
+            status, feats, err, _ = _process_track(
+                video_id,
+                threading.Event(),
+                threading.Event(),
+                threading.Semaphore(1),
+            )
+        except Exception as exc:  # noqa: BLE001
+            detail = f"{type(exc).__name__}: {exc}"
+            _set_one_status(video_id, "error", detail[:300])
+            return False, detail
+        if status == "ok":
+            _save_features(video_id, feats)
+            # prefetch YouTube Music data (album/year/thumbnail + native
+            # "radio" similar) so the track card is complete right after
+            # the analysis, without a manual visit
+            try:
+                from app.services import ytmusic
+
+                with Session(engine) as session:
+                    track = session.get(Track, video_id)
+                    title = track.title if track is not None else ""
+                ytmusic.similar(video_id, title)
+            except Exception:  # noqa: BLE001
+                # a bonus, not a part of the analysis result
+                pass
+            _set_one_status(video_id, "done")
+            return True, ""
+        detail = err or status
+        if status == "dl-error" and _classify_dl_error(detail) == "dead":
+            # same marking as the batch job: retry in UNAVAILABLE_TTL days
+            unav = _load_unavailable()
+            unav[video_id] = date.today().isoformat()
+            _save_unavailable(unav)
+        _set_one_status(video_id, "error", detail[:300])
+        return False, detail
+    finally:
+        _single_lock.release()

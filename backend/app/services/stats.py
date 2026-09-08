@@ -105,8 +105,30 @@ def artists(session: Session, limit: int = 20000) -> list[dict]:
         ),
         {**params, "lim": limit},
     ).all()
+    # representative video per artist (most played track) — used as the
+    # artist image (YouTube thumbnail) in the artists list
+    top_rows = session.execute(
+        text(
+            "SELECT artist, video_id FROM ("
+            f" SELECT {ARTIST_EXPR} AS artist, t.video_id AS video_id, "
+            "ROW_NUMBER() OVER ("
+            f" PARTITION BY {ARTIST_EXPR} ORDER BY COUNT(*) DESC, t.video_id"
+            ") AS rn "
+            + join
+            + f" AND {ARTIST_EXPR} != '' GROUP BY artist, t.video_id"
+            ") WHERE rn = 1"
+        ),
+        params,
+    ).all()
+    top_video = {r[0]: r[1] for r in top_rows}
     return [
-        {"channel": r[0], "plays": r[1], "tracks": r[2], "last_listen": r[3]}
+        {
+            "channel": r[0],
+            "plays": r[1],
+            "tracks": r[2],
+            "last_listen": r[3],
+            "top_video_id": top_video.get(r[0], ""),
+        }
         for r in rows
     ]
 

@@ -25,17 +25,22 @@ from app.models import (
 from app.parsers.takeout import load_history_file
 from app.services import jobs as jobs_svc
 from app.services.audio import run_audio_analysis
+from app.services.audio import analyze_one_status, analyze_track_now
 from app.services.clustering import run_clustering
 from app.services.importer import run_import
 from app.services.lyrics import run_lyrics
 from app.services.music_filter import run_filter
+from app.services.musicbrainz import run_mb_genres
 from app.services.recommend import (
     mb_for_track,
+    pair_essentia_match,
     similar_artists,
     similar_tracks_v2,
     similar_tracks_essentia,
 )
 from app.services import stats as stats_svc
+from app.services import musicbrainz as mb_svc
+from app.services import ytmusic as ytm_svc
 
 DIST_DIR = settings.frontend_dist
 
@@ -172,6 +177,12 @@ def api_pipeline_lyrics() -> dict:
     return {"ok": True}
 
 
+@app.post("/api/pipeline/mb-genres")
+def api_pipeline_mb_genres() -> dict:
+    _spawn("mb-genres", run_mb_genres)
+    return {"ok": True}
+
+
 def _date_str(v) -> str | None:
     if v is None:
         return None
@@ -241,18 +252,29 @@ def api_tracks(
             AudioFeatures.tags.like(f'%"{genre}"%')  # type: ignore[union-attr]
         )
     if instrumental:
-        # a whisper verdict wins; without one fall back to the vocal score
+        # whisper transcripts are often false positives: tracks whose only
+        # lyrics are whisper drafts count as instrumental ("no text")
         conditions.append(
             or_(
-                AudioFeatures.has_vocals == False,  # noqa: E712
+                Lyrics.source == "whisper",
                 and_(
-                    AudioFeatures.has_vocals.is_(None),
-                    AudioFeatures.vocal_ratio < settings.lyrics_min_vocal,  # type: ignore[operator]
+                    Lyrics.track_id.is_(None),
+                    or_(
+                        AudioFeatures.has_vocals == False,  # noqa: E712
+                        and_(
+                            AudioFeatures.has_vocals.is_(None),
+                            AudioFeatures.vocal_ratio
+                            < settings.lyrics_min_vocal,  # type: ignore[operator]
+                        ),
+                    ),
                 ),
             )
         )
     if language:
-        conditions.append(Lyrics.language == language)
+        # the language filter ignores whisper transcripts as well
+        conditions.append(
+            and_(Lyrics.language == language, Lyrics.source != "whisper")
+        )
 
     first_listen = func.min(Listen.listened_at).label("first_listen")
     last_listen = func.max(Listen.listened_at).label("last_listen")
@@ -427,6 +449,7 @@ def api_track_detail(video_id: str) -> dict:
                     ]
                 except (ValueError, TypeError, KeyError):
                     pass
+        item["ytm"] = ytm_svc.meta_for_track(video_id, track.title)
         return item
 
 
@@ -439,6 +462,26 @@ def api_clusters() -> list[dict]:
         return [
             {"id": c.id, "name": c.name, "size": c.size} for c in clusters
         ]
+
+
+@app.post("/api/tracks/{video_id}/analyze")
+def api_track_analyze(video_id: str) -> dict:
+    """On-demand analysis of one track (button in the track card)."""
+    with Session(engine) as session:
+        if session.get(Track, video_id) is None:
+            raise HTTPException(404, "Track not found")
+    threading.Thread(
+        target=analyze_track_now,
+        args=(video_id,),
+        daemon=True,
+        name=f"analyze-one-{video_id}",
+    ).start()
+    return {"ok": True, "status": "started"}
+
+
+@app.get("/api/tracks/{video_id}/analyze-status")
+def api_track_analyze_status(video_id: str) -> dict:
+    return analyze_one_status(video_id)
 
 
 @app.post("/api/tracks/{video_id}/classify")
@@ -537,11 +580,18 @@ def api_genres() -> list[dict]:
 
 @app.get("/api/languages")
 def api_languages() -> list[dict]:
-    """Lyrics languages present in the DB with track counts (tracks filter)."""
+    """Lyrics languages present in the DB with track counts (tracks filter).
+
+    Whisper transcripts are excluded: they are drafts, not real lyrics,
+    so they must not appear in the language filter.
+    """
     with Session(engine) as session:
         rows = session.exec(
             select(Lyrics.language, func.count(Lyrics.track_id))
-            .where(Lyrics.text != "")  # type: ignore[arg-type]
+            .where(
+                Lyrics.text != "",  # type: ignore[arg-type]
+                Lyrics.source != "whisper",
+            )
             .group_by(Lyrics.language)
         ).all()
     return [
@@ -605,7 +655,10 @@ def api_dashboard(
 @app.get("/api/artists")
 def api_artists() -> list[dict]:
     with Session(engine) as session:
-        return stats_svc.artists(session)
+        result = stats_svc.artists(session)
+    for item in result:
+        item["genre"] = mb_svc.cached_genre(item["channel"])
+    return result
 
 
 @app.get("/api/artist")
@@ -617,7 +670,9 @@ def api_artist(name: str = "") -> dict:
         summary = stats_svc.artist_summary(session, name)
         if summary is None:
             raise HTTPException(404, "Artist not found")
-        return summary
+    # on demand: first call hits MusicBrainz (throttled), then it is cached
+    summary["mb"] = mb_svc.artist_info(name)
+    return summary
 
 
 def _parse_date(value: str | None, name: str):
@@ -743,6 +798,68 @@ def api_recommendations_essentia(
         return {"similar": result, "total": total}
 
 
+@app.get("/api/tracks/{video_id}/youtube-similar")
+def api_youtube_similar(video_id: str) -> dict:
+    """YouTube-native recommendations ("radio" seeded by this track)."""
+    if not ytm_svc.enabled():
+        return {"enabled": False, "similar": []}
+    with Session(engine) as session:
+        track = session.get(Track, video_id)
+        title = track.title if track is not None else ""
+    items = ytm_svc.similar(video_id, title)
+    with Session(engine) as session:
+        seed_f = session.get(AudioFeatures, video_id)
+        seed_analyzed = (
+            seed_f is not None and seed_f.source == "audio" and bool(seed_f.tags)
+        )
+        for it in items:
+            t = session.get(Track, it["video_id"])
+            it["in_history"] = t is not None
+            it["info"] = None
+            if t is None:
+                continue
+            fl = session.exec(
+                select(func.min(Listen.listened_at), func.max(Listen.listened_at)).where(
+                    Listen.track_id == it["video_id"]
+                )
+            ).one()
+            info: dict = {
+                "play_count": t.play_count,
+                "cluster": "",
+                "genre": "",
+                "language": "",
+                "first_listen": _date_str(fl[0]),
+                "last_listen": _date_str(fl[1]),
+                "duration": t.duration,
+            }
+            if t.cluster_id is not None:
+                c = session.get(Cluster, t.cluster_id)
+                if c is not None:
+                    info["cluster"] = c.name
+            f = session.get(AudioFeatures, it["video_id"])
+            if f is not None and f.source == "audio":
+                info["tempo"] = _f(f.tempo, 1)
+                info["energy"] = _f(f.energy)
+                info["danceability"] = _f(f.danceability)
+                info["acousticness"] = _f(f.acousticness)
+                if f.tags:
+                    try:
+                        genres = json.loads(f.tags).get("genres") or []
+                        if genres:
+                            info["genre"] = genres[0].get("name", "")
+                    except (ValueError, TypeError, KeyError):
+                        pass
+            ly = session.get(Lyrics, it["video_id"])
+            if ly is not None:
+                info["language"] = ly.language
+            if seed_analyzed:
+                m = pair_essentia_match(video_id, it["video_id"])
+                if m is not None:
+                    info["match"] = round(m * 100)
+            it["info"] = info
+    return {"enabled": True, "similar": items}
+
+
 
 
 SETTINGS_FIELDS: list[dict] = [
@@ -841,8 +958,20 @@ SETTINGS_FIELDS: list[dict] = [
     {
         "key": "mb_enabled",
         "type": "bool",
-        "label": "MusicBrainz in recommendations",
-        "hint": "Fetch artist tags from MusicBrainz.",
+        "label": "MusicBrainz artist info",
+        "hint": "Fetch artist genres/tags from MusicBrainz (artist page, artists list, recommendations).",
+    },
+    {
+        "key": "mb_cache_days",
+        "type": "int",
+        "label": "MusicBrainz cache (days)",
+        "hint": "How long artist info is kept; \"not found\" rows are retried after 3 days.",
+    },
+    {
+        "key": "mb_prefill_limit",
+        "type": "int",
+        "label": "MB prefill: top artists per run",
+        "hint": "How many top artists the \"Artist genres\" job fetches per run (0 — all).",
     },
 ]
 

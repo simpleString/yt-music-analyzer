@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { LoadingNote } from "@/components/LoadingNote"
 
 export function SettingsPage() {
   const queryClient = useQueryClient()
@@ -77,9 +78,7 @@ export function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          {fields.length === 0 && (
-            <p className="text-muted-foreground text-sm">Loading…</p>
-          )}
+          {fields.length === 0 && <LoadingNote size="sm" />}
           <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
             {fields.map((f) => {
               const v = values[f.key]

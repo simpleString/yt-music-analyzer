@@ -32,6 +32,10 @@ class Settings(BaseSettings):
         "yt-music-analyzer/1.0 (local personal project; contact: example@example.com)"
     )
     mb_enabled: bool = True
+    # MusicBrainz artist info: cache TTL (not-found rows live shorter)
+    mb_cache_days: int = 30
+    # artist prefill job: how many top artists per run (0 — all)
+    mb_prefill_limit: int = 0
     # lyrics lookup: how many tracks per run, 0 — all eligible
     lyrics_limit: int = 0
     # vocal score (voice_instrumental head, fallback: Jamendo "Voice"
@@ -47,6 +51,16 @@ class Settings(BaseSettings):
     whisper_clip_seconds: int = 45
     audio_cookies_from_browser: str = "chrome"
     audio_cookies_keyring: str = "basictext"
+    # YouTube Music (unofficial API, no key/auth needed for browsing):
+    # extra track metadata + YouTube-native "similar" recommendations
+    ytm_enabled: bool = True
+    ytm_language: str = "en"
+    # cache TTL for fetched data; stale rows are refetched on demand
+    ytm_cache_days: int = 7
+    # how many similar tracks to request from the watch playlist
+    ytm_limit: int = 25
+    # min interval between YT Music requests (seconds), polite throttling
+    ytm_throttle: float = 0.7
 
     @property
     def db_path(self) -> Path:

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="6 10 82 54" width="246" height="162">
+  <!-- yt-music-analyzer mascot: a music note scanning with a magnifying glass -->
+  <!-- ground shadow -->
+  <ellipse cx="34" cy="58" rx="17" ry="2.5" fill="#000000" opacity="0.08"/>
+  <!-- the note -->
+  <path d="M36.8 47 V 15" stroke="#111111" stroke-width="2.6" fill="none"/>
+  <path d="M36.8 15 q 11 2 13 13 q -2.5 -7 -13 -6.5 z" fill="#111111"/>
+  <ellipse cx="30" cy="48" rx="8.2" ry="6.2" transform="rotate(-15 30 48)" fill="#111111"/>
+  <!-- googly eye -->
+  <circle cx="29.5" cy="46" r="4.4" fill="#ffffff" stroke="#111111" stroke-width="0.9"/>
+  <circle cx="27.7" cy="46.2" r="1.9" fill="#111111"/>
+  <!-- magnifying glass -->
+  <line x1="39" y1="47" x2="51" y2="37.5" stroke="#555555" stroke-width="3.2" stroke-linecap="round"/>
+  <circle cx="53" cy="35" r="8.6" fill="#bcd9f5" fill-opacity="0.5" stroke="#4d4d4d" stroke-width="2.4"/>
+  <path d="M48.6 32.4 q 3 -3 6.8 -2.2" stroke="#ffffff" stroke-width="1.6" fill="none" opacity="0.85" stroke-linecap="round"/>
+  <!-- sparkle: "found something!" -->
+  <path transform="translate(66 22)" d="M0 -5 L1.4 -1.4 L5 0 L1.4 1.4 L0 5 L-1.4 1.4 L-5 0 L-1.4 -1.4 Z" fill="#ff9900"/>
+</svg>

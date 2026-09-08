@@ -1,7 +1,10 @@
 import { useEffect, useRef } from "react"
-import { NavLink, Outlet } from "react-router-dom"
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom"
+import { ArrowLeft } from "lucide-react"
 
 import { useStateQuery } from "@/lib/api"
+import { NoteLogo } from "@/components/LoadingNote"
+import { Button } from "@/components/ui/button"
 
 const NAV = [
   { to: "/", label: "Tracks", end: true },
@@ -15,6 +18,11 @@ export function Layout() {
   const { data } = useStateQuery()
   const totals = data?.totals
   const headerRef = useRef<HTMLDivElement>(null)
+  const navigate = useNavigate()
+  const location = useLocation()
+  // detail pages have a "← Back" in the header so it is reachable
+  // from any scroll position
+  const showBack = /^\/(artist|track)\//.test(location.pathname)
 
   useEffect(() => {
     const el = headerRef.current
@@ -37,14 +45,28 @@ export function Layout() {
           className="sticky top-0 z-30 -mx-3 bg-background px-3"
         >
           <header className="w-full text-center">
-            <div className="flex flex-wrap items-baseline justify-center gap-x-2 gap-y-0.5">
-              <a
-                href="/"
-                className="text-lg font-bold no-underline"
-                style={{ color: "#ff0033" }}
-              >
-                yt-music-analyzer!
-              </a>
+            <div className="relative flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5">
+              {showBack && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="absolute left-0 top-1/2 -translate-y-1/2"
+                  onClick={() => navigate(-1)}
+                >
+                  <ArrowLeft className="size-3.5" />
+                  Back
+                </Button>
+              )}
+              <span className="inline-flex items-center gap-1.5">
+                <NoteLogo size={36} animated={false} />
+                <a
+                  href="/"
+                  className="text-lg font-bold no-underline"
+                  style={{ color: "#ff0033" }}
+                >
+                  yt-music-analyzer!
+                </a>
+              </span>
               <span className="text-xs text-[#666666]">
                 — music library
               </span>

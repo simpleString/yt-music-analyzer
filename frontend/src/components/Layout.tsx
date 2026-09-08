@@ -4,7 +4,8 @@ import { NavLink, Outlet } from "react-router-dom"
 import { useStateQuery } from "@/lib/api"
 
 const NAV = [
-  { to: "/", label: "Home", end: true },
+  { to: "/", label: "Tracks", end: true },
+  { to: "/artists", label: "Artists" },
   { to: "/dashboard", label: "Dashboard" },
   { to: "/import", label: "Import" },
   { to: "/settings", label: "Settings" },

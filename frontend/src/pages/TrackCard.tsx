@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react"
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
-import { Link, useNavigate, useParams } from "react-router-dom"
+import { useEffect, useState, type ReactNode } from "react";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ChevronDown } from "lucide-react";
 import {
   Cell,
   Pie,
@@ -9,24 +10,25 @@ import {
   PolarGrid,
   Radar,
   RadarChart,
-} from "recharts"
+} from "recharts";
 
-import { api } from "@/lib/api"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { api } from "@/lib/api";
+import { artistPath } from "@/lib/utils";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card"
+} from "@/components/ui/card";
 import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
-} from "@/components/ui/chart"
+} from "@/components/ui/chart";
 
 const MOOD_LABELS: [string, string][] = [
   ["mood_happy", "Happy"],
@@ -40,7 +42,7 @@ const MOOD_LABELS: [string, string][] = [
   ["mood_dark", "Dark"],
   ["mood_romantic", "Romantic"],
   ["mood_atmospheric", "Atmospheric"],
-]
+];
 
 const FEATURE_LABELS: [string, string][] = [
   ["energy", "Energy"],
@@ -49,7 +51,7 @@ const FEATURE_LABELS: [string, string][] = [
   ["brightness", "Brightness"],
   ["dynamics", "Dynamics"],
   ["percussive", "Percussion"],
-]
+];
 
 const PIE_COLORS = [
   "var(--chart-1)",
@@ -57,7 +59,7 @@ const PIE_COLORS = [
   "var(--chart-3)",
   "var(--chart-4)",
   "var(--chart-5)",
-]
+];
 
 const MATCH_COLORS: Record<string, string> = {
   "by timbre": "var(--chart-1)",
@@ -69,39 +71,231 @@ const MATCH_COLORS: Record<string, string> = {
   "by lyrics": "var(--chart-3)",
   "by themes": "var(--chart-2)",
   essentia: "var(--chart-4)",
-}
+};
+
+type SimilarItem = {
+  track: { video_id: string; title: string; channel: string; artist?: string };
+  distance: number;
+  match?: string;
+  tempo?: number | null;
+};
 
 function fmtDuration(sec: number | null): string {
-  if (!sec) return "—"
-  const m = Math.floor(sec / 60)
-  const s = Math.round(sec % 60)
-  return `${m}:${String(s).padStart(2, "0")}`
+  if (!sec) return "—";
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function Stat({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <span>
+      <span className="text-muted-foreground">{label}: </span>
+      <span className="font-medium">{value}</span>
+    </span>
+  );
+}
+
+function RadarCard({
+  title,
+  data,
+  color,
+}: {
+  title: string;
+  data: { axis: string; value: number }[];
+  color: string;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ChartContainer
+          config={{ value: { label: "value" } }}
+          className="aspect-auto h-64 w-full"
+        >
+          <RadarChart data={data}>
+            <PolarGrid />
+            <PolarAngleAxis dataKey="axis" />
+            <ChartTooltip content={<ChartTooltipContent />} />
+            <Radar
+              dataKey="value"
+              stroke={color}
+              fill={color}
+              fillOpacity={0.35}
+            />
+          </RadarChart>
+        </ChartContainer>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DonutCard({
+  title,
+  data,
+  unit,
+  legendCols = 1,
+}: {
+  title: string
+  data: { name: string; value: number }[]
+  unit: string
+  legendCols?: 1 | 2
+}) {
+  const total = data.reduce((s, d) => s + d.value, 0)
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col items-center gap-2 sm:flex-row sm:items-center sm:gap-4">
+        <div className="relative shrink-0">
+          <ChartContainer
+            config={{ value: { label: "weight" } }}
+            className="aspect-auto h-40 w-40"
+          >
+            <PieChart>
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Pie
+                data={data}
+                dataKey="value"
+                nameKey="name"
+                innerRadius="55%"
+                outerRadius="85%"
+                paddingAngle={2}
+              >
+                {data.map((g, i) => (
+                  <Cell key={g.name} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                ))}
+              </Pie>
+            </PieChart>
+          </ChartContainer>
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+            <span className="text-lg font-bold text-black">{data.length}</span>
+            <span className="text-muted-foreground text-xs">{unit}</span>
+          </div>
+        </div>
+        <ul
+          className={`grid flex-1 gap-x-6 gap-y-1 ${legendCols === 2 ? "sm:grid-cols-2" : ""}`}
+        >
+          {data.map((g, i) => (
+            <li key={g.name} className="flex items-center gap-1.5 text-xs">
+              <span
+                className="inline-block h-2.5 w-2.5 shrink-0 border border-[#666666]"
+                style={{ background: PIE_COLORS[i % PIE_COLORS.length] }}
+              />
+              <span className="min-w-0 flex-1 truncate">{g.name}</span>
+              <span className="tabular-nums">
+                {Math.round((g.value / total) * 100)}%
+              </span>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  )
+}
+
+function SimilarRow({
+  item,
+  index,
+  maxD,
+  showMatch,
+  onOpen,
+}: {
+  item: SimilarItem;
+  index: number;
+  maxD: number;
+  showMatch: boolean;
+  onOpen: () => void;
+}) {
+  // skewed scale: everything in recommendations is already
+  // "similar", so worst of the top >= 50%, best -> 100%
+  const sim = maxD > 0 ? 0.5 + 0.5 * (1 - item.distance / maxD) : 1;
+  const pct = Math.round(sim * 100);
+  const hue = 45 + (142 - 45) * ((sim - 0.5) * 2);
+  return (
+    <li
+      className="hover:bg-[#ffffcc] flex cursor-pointer items-center gap-1.5 border-b border-[#e0e0e0] px-1 py-1 last:border-b-0"
+      title={`distance: ${item.distance}`}
+      onClick={onOpen}
+    >
+      <span className="text-muted-foreground w-5 shrink-0 text-right text-xs tabular-nums">
+        {index + 1}
+      </span>
+      <img
+        src={`https://i.ytimg.com/vi/${item.track.video_id}/mqdefault.jpg`}
+        alt=""
+        loading="lazy"
+        className="h-8 w-[52px] shrink-0 border border-[#999999] object-cover"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm">{item.track.title}</span>
+        <Link
+          to={artistPath(item.track.artist ?? item.track.channel)}
+          className="text-muted-foreground block truncate text-xs hover:underline"
+        >
+          {item.track.channel}
+        </Link>
+      </span>
+      {showMatch && item.match ? (
+        <Badge
+          variant="outline"
+          className="shrink-0 text-xs"
+          style={{
+            borderColor: MATCH_COLORS[item.match] ?? "var(--chart-5)",
+            color: MATCH_COLORS[item.match] ?? "var(--chart-5)",
+          }}
+        >
+          {item.match}
+        </Badge>
+      ) : null}
+      <span className="w-8 shrink-0 text-right text-xs tabular-nums">
+        {pct}%
+      </span>
+      <span className="h-2.5 w-24 shrink-0 border border-[#999999] bg-[#eeeeee]">
+        <span
+          className="block h-full"
+          style={{ width: `${pct}%`, background: `hsl(${hue} 70% 45%)` }}
+        />
+      </span>
+    </li>
+  );
 }
 
 export function TrackCard() {
-  const { videoId } = useParams()
-  const navigate = useNavigate()
-  const [showLyrics, setShowLyrics] = useState(false)
-  const sentinelRef = useRef<HTMLDivElement | null>(null)
-  const similarSentinelRef = useRef<HTMLDivElement | null>(null)
+  const { videoId } = useParams();
+  const navigate = useNavigate();
+  const [showLyrics, setShowLyrics] = useState(false);
 
-  const { data: t, isLoading, isError } = useQuery({
+  // remember the last opened track: the tracks list scrolls back to it
+  // on browser Back
+  useEffect(() => {
+    if (videoId) sessionStorage.setItem("tracks-open-track", videoId);
+  }, [videoId]);
+
+  const {
+    data: t,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ["track", videoId],
     queryFn: () => api.trackDetail(videoId!),
     enabled: !!videoId,
-  })
+  });
 
   const { data: lyrics } = useQuery({
     queryKey: ["lyrics", videoId],
     queryFn: () => api.trackLyrics(videoId!),
     enabled: !!videoId && !!t?.has_lyrics,
-  })
+  });
 
   const { data: recs } = useQuery({
     queryKey: ["recommendations", videoId],
     queryFn: () => api.recommendations(videoId!),
     enabled: !!videoId,
-  })
+  });
 
   const essentiaQuery = useInfiniteQuery({
     queryKey: ["essentia-recommendations", videoId],
@@ -110,10 +304,10 @@ export function TrackCard() {
     initialPageParam: 0,
     enabled: !!videoId,
     getNextPageParam: (lastPage, allPages) => {
-      const loaded = allPages.reduce((sum, p) => sum + p.similar.length, 0)
-      return loaded < lastPage.total ? loaded : undefined
+      const loaded = allPages.reduce((sum, p) => sum + p.similar.length, 0);
+      return loaded < lastPage.total ? loaded : undefined;
     },
-  })
+  });
 
   const similarQuery = useInfiniteQuery({
     queryKey: ["similar-recommendations", videoId],
@@ -122,84 +316,57 @@ export function TrackCard() {
     initialPageParam: 0,
     enabled: !!videoId,
     getNextPageParam: (lastPage, allPages) => {
-      const loaded = allPages.reduce((sum, p) => sum + p.similar.length, 0)
-      return loaded < lastPage.total ? loaded : undefined
+      const loaded = allPages.reduce((sum, p) => sum + p.similar.length, 0);
+      return loaded < lastPage.total ? loaded : undefined;
     },
-  })
+  });
 
-  useEffect(() => {
-    const el = sentinelRef.current
-    if (!el) return
-    const obs = new IntersectionObserver(
-      ([entry]) => {
-        if (
-          entry.isIntersecting &&
-          essentiaQuery.hasNextPage &&
-          !essentiaQuery.isFetchingNextPage
-        ) {
-          essentiaQuery.fetchNextPage()
-        }
-      },
-      { rootMargin: "200px" }
-    )
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [essentiaQuery.hasNextPage, essentiaQuery.isFetchingNextPage, essentiaQuery.fetchNextPage])
+  const essentiaItems =
+    essentiaQuery.data?.pages.flatMap((p) => p.similar) ?? [];
+  const essentiaTotal = essentiaQuery.data?.pages[0]?.total ?? 0;
+  const similarItems = similarQuery.data?.pages.flatMap((p) => p.similar) ?? [];
+  const similarTotal = similarQuery.data?.pages[0]?.total ?? 0;
+  const similarMaxD = similarItems.length
+    ? Math.max(...similarItems.map((x) => x.distance))
+    : 0;
+  const essentiaMaxD = essentiaItems.length
+    ? Math.max(...essentiaItems.map((x) => x.distance))
+    : 0;
 
-  useEffect(() => {
-    const el = similarSentinelRef.current
-    if (!el) return
-    const obs = new IntersectionObserver(
-      ([entry]) => {
-        if (
-          entry.isIntersecting &&
-          similarQuery.hasNextPage &&
-          !similarQuery.isFetchingNextPage
-        ) {
-          similarQuery.fetchNextPage()
-        }
-      },
-      { rootMargin: "200px" }
-    )
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [similarQuery.hasNextPage, similarQuery.isFetchingNextPage, similarQuery.fetchNextPage])
-
-  const essentiaItems = essentiaQuery.data?.pages.flatMap((p) => p.similar) ?? []
-  const essentiaTotal = essentiaQuery.data?.pages[0]?.total ?? 0
-  const similarItems = similarQuery.data?.pages.flatMap((p) => p.similar) ?? []
-  const similarTotal = similarQuery.data?.pages[0]?.total ?? 0
-
-  if (isLoading) return <p className="text-muted-foreground">Loading…</p>
+  if (isLoading) return <p className="text-muted-foreground">Loading…</p>;
   if (isError || !t)
     return (
       <div className="flex flex-col gap-4">
         <Alert variant="destructive">
           <AlertDescription>Track not found.</AlertDescription>
         </Alert>
-        <Button variant="outline" className="w-fit" onClick={() => navigate(-1)}>
+        <Button
+          variant="outline"
+          className="w-fit"
+          onClick={() => navigate(-1)}
+        >
           Back
         </Button>
       </div>
-    )
+    );
 
   const moodData = MOOD_LABELS.map(([key, label]) => ({
     axis: label,
     value: (t as unknown as Record<string, number | null>)[key] ?? 0,
-  }))
+  }));
   const featureData = FEATURE_LABELS.map(([key, label]) => ({
     axis: label,
     value: (t as unknown as Record<string, number | null>)[key] ?? 0,
-  }))
+  }));
   const genreData = t.genre_scores.map((g) => ({
     name: g.name,
     value: Math.max(g.score, 0.0001),
-  }))
+  }));
   const instrumentData = t.instrument_scores.map((g) => ({
     name: g.name,
     value: Math.max(g.score, 0.0001),
-  }))
-  const hasFeatures = t.energy != null || t.tempo != null
+  }));
+  const hasFeatures = t.energy != null || t.tempo != null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -211,7 +378,7 @@ export function TrackCard() {
 
       {/* Header */}
       <Card>
-        <CardContent className="flex flex-wrap items-start gap-3">
+        <CardContent className="flex items-start gap-3">
           <a
             href={`https://www.youtube.com/watch?v=${t.video_id}`}
             target="_blank"
@@ -221,66 +388,69 @@ export function TrackCard() {
             <img
               src={`https://i.ytimg.com/vi/${t.video_id}/mqdefault.jpg`}
               alt=""
-              className="h-24 border border-[#999999]"
+              className="h-[70px] w-auto border border-[#999999]"
               loading="lazy"
             />
           </a>
-          <div className="flex min-w-0 flex-1 flex-col gap-2">
-            <h1 className="text-lg font-bold text-black break-words">
-              {t.title}
-            </h1>
-            <p className="text-muted-foreground">{t.channel}</p>
-            <div className="flex flex-wrap items-center gap-2">
-              {t.cluster_name && (
-                <Badge variant="secondary">{t.cluster_name}</Badge>
-              )}
-              {t.topic && <Badge variant="outline">topic: {t.topic}</Badge>}
-              {t.language && <Badge variant="outline">{t.language}</Badge>}
-              {t.sentiment != null && (
-                <Badge variant="outline">
-                  sentiment: {t.sentiment > 0 ? "+" : ""}
-                  {t.sentiment}
-                </Badge>
-              )}
+          <div className="flex min-w-0 flex-1 flex-col justify-center gap-1 overflow-hidden">
+            <div className="flex flex-col min-w-0 items-baseline">
+              <a
+                href={`https://www.youtube.com/watch?v=${t.video_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 min-w-0 flex-1 truncate text-base font-bold"
+              >
+                {t.title}
+              </a>
+              <span className="text-muted-foreground min-w-0 shrink-[2] truncate text-xs">
+                <Link
+                  to={artistPath(t.artist ?? t.channel)}
+                  className="hover:underline"
+                >
+                  {t.channel}
+                </Link>
+              </span>
             </div>
-            <dl className="text-muted-foreground mt-1 grid grid-cols-2 gap-x-6 gap-y-0.5 text-sm sm:grid-cols-3">
-              <div>
-                <dt className="inline">plays: </dt>
-                <dd className="text-foreground inline font-medium">
-                  {t.play_count}
-                </dd>
+            <div className="grid grid-cols-2 items-center gap-1">
+              <div className="flex flex-wrap gap-1 items-center">
+                {t.cluster_name && (
+                  <Badge variant="secondary" className="px-1.5 py-0 text-xs">
+                    {t.cluster_name}
+                  </Badge>
+                )}
+                {t.topic && (
+                  <Badge variant="outline" className="px-1.5 py-0 text-xs">
+                    {t.topic}
+                  </Badge>
+                )}
+                {t.language && (
+                  <Badge variant="outline" className="px-1.5 py-0 text-xs">
+                    {t.language}
+                  </Badge>
+                )}
+                {t.sentiment != null && (
+                  <Badge variant="outline" className="px-1.5 py-0 text-xs">
+                    sentiment: {t.sentiment > 0 ? "+" : ""}
+                    {t.sentiment}
+                  </Badge>
+                )}
               </div>
-              <div>
-                <dt className="inline">duration: </dt>
-                <dd className="text-foreground inline font-medium">
-                  {fmtDuration(t.duration)}
-                </dd>
+
+              <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-sm sm:grid-cols-3">
+                <div className="flex flex-col sm:border-l sm:border-[#e0e0e0] sm:pl-4">
+                  <Stat label="plays" value={t.play_count} />
+                  <Stat label="key" value={t.key || "—"} />
+                </div>
+                <div className="flex flex-col sm:border-l sm:border-[#e0e0e0] sm:pl-4">
+                  <Stat label="duration" value={fmtDuration(t.duration)} />
+                  <Stat label="first listen" value={t.first_listen ?? "—"} />
+                </div>
+                <div className="flex flex-col sm:border-l sm:border-[#e0e0e0] sm:pl-4">
+                  <Stat label="BPM" value={t.tempo ?? "—"} />
+                  <Stat label="last listen" value={t.last_listen ?? "—"} />
+                </div>
               </div>
-              <div>
-                <dt className="inline">BPM: </dt>
-                <dd className="text-foreground inline font-medium">
-                  {t.tempo ?? "—"}
-                </dd>
-              </div>
-              <div>
-                <dt className="inline">key: </dt>
-                <dd className="text-foreground inline font-medium">
-                  {t.key || "—"}
-                </dd>
-              </div>
-              <div>
-                <dt className="inline">first listen: </dt>
-                <dd className="text-foreground inline font-medium">
-                  {t.first_listen ?? "—"}
-                </dd>
-              </div>
-              <div>
-                <dt className="inline">last listen: </dt>
-                <dd className="text-foreground inline font-medium">
-                  {t.last_listen ?? "—"}
-                </dd>
-              </div>
-            </dl>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -288,157 +458,29 @@ export function TrackCard() {
       {/* Charts */}
       {hasFeatures ? (
         <div className="grid gap-3 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Moods</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ChartContainer
-                config={{ value: { label: "value" } }}
-                className="aspect-auto h-72 w-full"
-              >
-                <RadarChart data={moodData}>
-                  <PolarGrid />
-                  <PolarAngleAxis dataKey="axis" />
-                  <ChartTooltip content={<ChartTooltipContent />} />
-                  <Radar
-                    dataKey="value"
-                    stroke="var(--chart-1)"
-                    fill="var(--chart-1)"
-                    fillOpacity={0.35}
-                  />
-                </RadarChart>
-              </ChartContainer>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Features</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ChartContainer
-                config={{ value: { label: "value" } }}
-                className="aspect-auto h-72 w-full"
-              >
-                <RadarChart data={featureData}>
-                  <PolarGrid />
-                  <PolarAngleAxis dataKey="axis" />
-                  <ChartTooltip content={<ChartTooltipContent />} />
-                  <Radar
-                    dataKey="value"
-                    stroke="var(--chart-2)"
-                    fill="var(--chart-2)"
-                    fillOpacity={0.35}
-                  />
-                </RadarChart>
-              </ChartContainer>
-            </CardContent>
-          </Card>
-
+          <RadarCard title="Moods" data={moodData} color="var(--chart-1)" />
+          <RadarCard
+            title="Features"
+            data={featureData}
+            color="var(--chart-2)"
+          />
           {genreData.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Genres</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ChartContainer
-                  config={{ value: { label: "weight" } }}
-                  className="aspect-auto h-64 w-full"
-                >
-                  <PieChart>
-                    <ChartTooltip content={<ChartTooltipContent />} />
-                    <Pie
-                      data={genreData}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius="45%"
-                      outerRadius="80%"
-                      paddingAngle={2}
-                    >
-                      {genreData.map((g, i) => (
-                        <Cell
-                          key={g.name}
-                          fill={PIE_COLORS[i % PIE_COLORS.length]}
-                        />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ChartContainer>
-                <ul className="mt-2 flex flex-wrap gap-2">
-                  {genreData.map((g, i) => (
-                    <li
-                      key={g.name}
-                      className="flex items-center gap-1.5 text-xs"
-                    >
-                      <span
-                        className="inline-block h-2.5 w-2.5 border border-[#666666]"
-                        style={{
-                          background: PIE_COLORS[i % PIE_COLORS.length],
-                        }}
-                      />
-                      {g.name}
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
+            <DonutCard title="Genres" data={genreData} unit="genres" />
           )}
-
           {instrumentData.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Instruments</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ChartContainer
-                  config={{ value: { label: "weight" } }}
-                  className="aspect-auto h-64 w-full"
-                >
-                  <PieChart>
-                    <ChartTooltip content={<ChartTooltipContent />} />
-                    <Pie
-                      data={instrumentData}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius="45%"
-                      outerRadius="80%"
-                      paddingAngle={2}
-                    >
-                      {instrumentData.map((g, i) => (
-                        <Cell
-                          key={g.name}
-                          fill={PIE_COLORS[i % PIE_COLORS.length]}
-                        />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ChartContainer>
-                <ul className="mt-2 flex flex-wrap gap-2">
-                  {instrumentData.map((g, i) => (
-                    <li
-                      key={g.name}
-                      className="flex items-center gap-1.5 text-xs"
-                    >
-                      <span
-                        className="inline-block h-2.5 w-2.5 border border-[#666666]"
-                        style={{
-                          background: PIE_COLORS[i % PIE_COLORS.length],
-                        }}
-                      />
-                      {g.name}
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
+            <DonutCard
+              title="Instruments"
+              data={instrumentData}
+              unit="instruments"
+              legendCols={2}
+            />
           )}
         </div>
       ) : (
         <Alert>
           <AlertDescription>
-            Track not analyzed yet — run "Audio analysis" on the import page
-            to see moods, genres, and instruments.
+            Track not analyzed yet — run "Audio analysis" on the import page to
+            see moods, genres, and instruments.
           </AlertDescription>
         </Alert>
       )}
@@ -455,13 +497,16 @@ export function TrackCard() {
                 </Badge>
               )}
             </CardTitle>
-            <Button
-              size="sm"
-              variant="outline"
+            <button
+              type="button"
+              aria-label={showLyrics ? "Collapse" : "Expand"}
               onClick={() => setShowLyrics((v) => !v)}
+              className="text-muted-foreground hover:text-foreground flex h-6 w-6 items-center justify-center"
             >
-              {showLyrics ? "Collapse" : "Expand"}
-            </Button>
+              <ChevronDown
+                className={`h-4 w-4 transition-transform ${showLyrics ? "rotate-180" : ""}`}
+              />
+            </button>
           </CardHeader>
           {showLyrics && lyrics && (
             <CardContent>
@@ -473,223 +518,113 @@ export function TrackCard() {
         </Card>
       )}
 
-      {/* Similar tracks */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Similar tracks</CardTitle>
-          <CardDescription>
-            weighted metric: timbre · rhythm · harmony · character ·
-            instruments · genre · lyrics · themes
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {similarQuery.isPending ? (
-            <p className="text-muted-foreground text-sm">
-              Finding similar tracks…
-            </p>
-          ) : similarItems.length > 0 ? (
-            <>
-              <div className="mb-3 flex flex-wrap gap-1.5">
-                {Array.from(
-                  new Set(similarItems.map((s) => s.match).filter(Boolean))
-                ).map((m) => (
-                  <Badge
-                    key={m}
-                    variant="outline"
-                    className="text-xs"
-                    style={{
-                      borderColor: MATCH_COLORS[m] ?? "var(--chart-5)",
-                      color: MATCH_COLORS[m] ?? "var(--chart-5)",
-                    }}
-                  >
-                    {m}
-                  </Badge>
-                ))}
-              </div>
-              <ul className="flex flex-col">
-                {similarItems.map((s, i) => {
-                  const maxD = Math.max(
-                    ...similarItems.map((x) => x.distance)
-                  )
-                  // skewed scale: everything in recommendations is already
-                  // "similar", so worst of the top ≥ 50%, best → 100%
-                  const sim = maxD > 0 ? 0.5 + 0.5 * (1 - s.distance / maxD) : 1
-                  const pct = Math.round(sim * 100)
-                  // full gradient gamma over the skewed 50-100% range
-                  const hue = 45 + (142 - 45) * ((sim - 0.5) * 2)
-                  return (
-                    <li
-                      key={s.track.video_id}
-                      className="hover:bg-[#ffffcc] flex cursor-pointer items-center gap-1.5 border-b border-[#e0e0e0] px-1 py-0.5 last:border-b-0"
-                      title={`distance: ${s.distance}`}
-                      onClick={() => navigate(`/track/${s.track.video_id}`)}
-                    >
-                      <span className="text-muted-foreground w-6 shrink-0 text-right text-sm tabular-nums">
-                        {i + 1}
-                      </span>
-                      <img
-                        src={`https://i.ytimg.com/vi/${s.track.video_id}/mqdefault.jpg`}
-                        alt=""
-                        loading="lazy"
-                        className="h-9 w-[56px] shrink-0 border border-[#999999] object-cover"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm">
-                          {s.track.title}
-                        </span>
-                        <span className="text-muted-foreground block truncate text-xs">
-                          {s.track.channel}
-                        </span>
-                      </span>
-                      <span className="text-muted-foreground hidden w-12 shrink-0 text-right text-sm tabular-nums sm:inline">
-                        {s.tempo ? Math.round(s.tempo) : "—"}
-                      </span>
-                      {s.match ? (
-                        <Badge
-                          variant="outline"
-                          className="shrink-0 text-xs"
-                          style={{
-                            borderColor:
-                              MATCH_COLORS[s.match] ?? "var(--chart-5)",
-                            color: MATCH_COLORS[s.match] ?? "var(--chart-5)",
-                          }}
-                        >
-                          {s.match}
-                        </Badge>
-                      ) : null}
-                      <span className="flex w-32 shrink-0 items-center gap-2">
-                        <span className="h-3 flex-1 overflow-hidden border border-[#999999] bg-[#eeeeee]">
-                          <span
-                            className="block h-full"
-                            style={{
-                              width: `${pct}%`,
-                              background: `hsl(${hue} 70% 45%)`,
-                            }}
-                          />
-                        </span>
-                        <span className="w-9 text-right text-xs tabular-nums">
-                          {pct}%
-                        </span>
-                      </span>
-                    </li>
-                  )
-                })}
-              </ul>
-              {/* sentinel for infinite scroll */}
-              <div ref={similarSentinelRef} className="h-4" />
-              {similarQuery.isFetchingNextPage && (
-                <p className="text-muted-foreground py-2 text-center text-sm">
-                  Loading more…
-                </p>
-              )}
-              {!similarQuery.hasNextPage && similarItems.length > 0 && (
-                <p className="text-muted-foreground py-2 text-center text-xs">
-                  showing all {similarTotal} tracks
-                </p>
-              )}
-            </>
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              Not enough analyzed tracks to compare.
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Similar tracks (Essentia) — infinite feed */}
-      {essentiaItems.length > 0 && (
+      {/* Similar tracks (v2 + Essentia side by side) */}
+      <div className="grid gap-3 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Similar tracks (Essentia)</CardTitle>
-            <CardDescription>
-              genres · instruments · moods · vocals ·{" "}
-              {essentiaTotal} total
+            <CardTitle>Similar tracks</CardTitle>
+            <CardDescription className="text-xs">
+              weighted metric: timbre · rhythm · harmony · character ·
+              instruments · genre · lyrics · themes
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <ul className="flex flex-col">
-              {essentiaItems.map((s, i) => {
-                const maxD = Math.max(...essentiaItems.map((x) => x.distance))
-                const sim = maxD > 0 ? 0.5 + 0.5 * (1 - s.distance / maxD) : 1
-                const pct = Math.round(sim * 100)
-                const hue = 45 + (142 - 45) * ((sim - 0.5) * 2)
-                return (
-                  <li
-                    key={`${s.track.video_id}-${i}`}
-                    className="hover:bg-[#ffffcc] flex cursor-pointer items-center gap-1.5 border-b border-[#e0e0e0] px-1 py-0.5 last:border-b-0"
-                    title={`distance: ${s.distance}`}
-                    onClick={() => navigate(`/track/${s.track.video_id}`)}
-                  >
-                    <span className="text-muted-foreground w-6 shrink-0 text-right text-sm tabular-nums">
-                      {i + 1}
-                    </span>
-                    <img
-                      src={`https://i.ytimg.com/vi/${s.track.video_id}/mqdefault.jpg`}
-                      alt=""
-                      loading="lazy"
-                      className="h-9 w-[56px] shrink-0 border border-[#999999] object-cover"
+            {similarQuery.isPending ? (
+              <p className="text-muted-foreground text-sm">
+                Finding similar tracks…
+              </p>
+            ) : similarItems.length > 0 ? (
+              <>
+                <ul className="flex flex-col">
+                  {similarItems.map((s, i) => (
+                    <SimilarRow
+                      key={s.track.video_id}
+                      item={s}
+                      index={i}
+                      maxD={similarMaxD}
+                      showMatch={false}
+                      onOpen={() => navigate(`/track/${s.track.video_id}`)}
                     />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">
-                        {s.track.title}
-                      </span>
-                      <span className="text-muted-foreground block truncate text-xs">
-                        {s.track.channel}
-                      </span>
-                    </span>
-                    <Badge
-                      variant="outline"
-                      className="shrink-0 text-xs"
-                      style={{
-                        borderColor:
-                          MATCH_COLORS[s.match] ?? "var(--chart-5)",
-                        color: MATCH_COLORS[s.match] ?? "var(--chart-5)",
-                      }}
-                    >
-                      {s.match}
-                    </Badge>
-                    <span className="flex w-32 shrink-0 items-center gap-2">
-                      <span className="h-3 flex-1 overflow-hidden border border-[#999999] bg-[#eeeeee]">
-                        <span
-                          className="block h-full"
-                          style={{
-                            width: `${pct}%`,
-                            background: `hsl(${hue} 70% 45%)`,
-                          }}
-                        />
-                      </span>
-                      <span className="w-9 text-right text-xs tabular-nums">
-                        {pct}%
-                      </span>
-                    </span>
-                  </li>
-                )
-              })}
-            </ul>
-            {/* sentinel for infinite scroll */}
-            <div ref={sentinelRef} className="h-4" />
-            {essentiaQuery.isFetchingNextPage && (
-              <p className="text-muted-foreground py-2 text-center text-sm">
-                Loading more…
-              </p>
-            )}
-            {!essentiaQuery.hasNextPage && essentiaItems.length > 0 && (
-              <p className="text-muted-foreground py-2 text-center text-xs">
-                showing all {essentiaTotal} tracks
+                  ))}
+                </ul>
+                {similarQuery.hasNextPage ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 w-full"
+                    disabled={similarQuery.isFetchingNextPage}
+                    onClick={() => similarQuery.fetchNextPage()}
+                  >
+                    {similarQuery.isFetchingNextPage
+                      ? "Loading…"
+                      : `Show more (${similarTotal - similarItems.length})`}
+                  </Button>
+                ) : (
+                  <p className="text-muted-foreground py-1.5 text-center text-xs">
+                    showing all {similarTotal} tracks
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-muted-foreground text-sm">
+                Not enough analyzed tracks to compare.
               </p>
             )}
           </CardContent>
         </Card>
-      )}
-      {essentiaQuery.isPending && videoId && (
+
         <Card>
-          <CardContent className="py-6">
-            <p className="text-muted-foreground text-center text-sm">
-              Finding similar tracks…
-            </p>
+          <CardHeader>
+            <CardTitle>Similar tracks (Essentia)</CardTitle>
+            <CardDescription className="text-xs">
+              genres · instruments · moods · vocals · {essentiaTotal} total
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {essentiaQuery.isPending ? (
+              <p className="text-muted-foreground text-sm">
+                Finding similar tracks…
+              </p>
+            ) : essentiaItems.length > 0 ? (
+              <>
+                <ul className="flex flex-col">
+                  {essentiaItems.map((s, i) => (
+                    <SimilarRow
+                      key={`${s.track.video_id}-${i}`}
+                      item={s}
+                      index={i}
+                      maxD={essentiaMaxD}
+                      showMatch
+                      onOpen={() => navigate(`/track/${s.track.video_id}`)}
+                    />
+                  ))}
+                </ul>
+                {essentiaQuery.hasNextPage ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 w-full"
+                    disabled={essentiaQuery.isFetchingNextPage}
+                    onClick={() => essentiaQuery.fetchNextPage()}
+                  >
+                    {essentiaQuery.isFetchingNextPage
+                      ? "Loading…"
+                      : `Show more (${essentiaTotal - essentiaItems.length})`}
+                  </Button>
+                ) : (
+                  <p className="text-muted-foreground py-1.5 text-center text-xs">
+                    showing all {essentiaTotal} tracks
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-muted-foreground text-sm">
+                No essentia tag data for this track.
+              </p>
+            )}
           </CardContent>
         </Card>
-      )}
+      </div>
 
       {/* Similar artists */}
       {recs?.similar_artists && recs.similar_artists.length > 0 && (
@@ -705,10 +640,15 @@ export function TrackCard() {
                   className="flex items-center justify-between gap-2 border border-[#cccccc] px-2 py-1.5"
                 >
                   <span className="min-w-0">
-                    <b className="block truncate text-sm">{a.channel}</b>
+                    <Link
+                      to={artistPath(a.channel)}
+                      className="block truncate text-sm font-bold hover:underline"
+                    >
+                      {a.channel}
+                    </Link>
                     <span className="text-muted-foreground text-xs">
-                      {a.tracks_analyzed} of {a.tracks_total} tracks
-                      analyzed · {a.plays} plays
+                      {a.tracks_analyzed} of {a.tracks_total} tracks analyzed ·{" "}
+                      {a.plays} plays
                     </span>
                   </span>
                   <Badge variant="secondary" className="shrink-0">
@@ -737,7 +677,10 @@ export function TrackCard() {
                 <li key={a.name} className="text-sm">
                   <b>{a.name}</b>
                   {a.country && (
-                    <span className="text-muted-foreground"> ({a.country})</span>
+                    <span className="text-muted-foreground">
+                      {" "}
+                      ({a.country})
+                    </span>
                   )}
                   {a.tags && (
                     <span className="text-muted-foreground"> — {a.tags}</span>
@@ -755,5 +698,5 @@ export function TrackCard() {
         </Link>
       </p>
     </div>
-  )
+  );
 }

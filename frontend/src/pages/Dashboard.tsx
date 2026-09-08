@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { keepPreviousData, useQuery } from "@tanstack/react-query"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import {
   Bar,
   BarChart,
@@ -12,6 +12,7 @@ import {
 } from "recharts"
 
 import { api } from "@/lib/api"
+import { artistPath } from "@/lib/utils"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -202,11 +203,17 @@ export function Dashboard() {
               </TableHeader>
               <TableBody>
                 {data.top_artists.map((a, i) => (
-                  <TableRow key={a.channel}>
+                  <TableRow
+                    key={a.channel}
+                    className="cursor-pointer"
+                    onClick={() => navigate(artistPath(a.channel))}
+                  >
                     <TableData className="text-muted-foreground tabular-nums">
                       {i + 1}
                     </TableData>
-                    <TableData>{a.channel}</TableData>
+                    <TableData>
+                      <span className="hover:underline">{a.channel}</span>
+                    </TableData>
                     <TableData className="tabular-nums">{a.plays}</TableData>
                     <TableData className="tabular-nums">{a.tracks}</TableData>
                   </TableRow>
@@ -234,16 +241,26 @@ export function Dashboard() {
                   <TableRow
                     key={t.video_id}
                     className="cursor-pointer"
-                    onClick={() => navigate(`/track/${t.video_id}`)}
+                    onClick={(e) => {
+                      if (
+                        e.target instanceof HTMLElement &&
+                        e.target.closest("a")
+                      )
+                        return;
+                      navigate(`/track/${t.video_id}`);
+                    }}
                   >
                     <TableData className="text-muted-foreground tabular-nums">
                       {i + 1}
                     </TableData>
                     <TableData className="max-w-[22rem] truncate">
                       <span className="hover:underline">{t.title}</span>
-                      <span className="text-muted-foreground block truncate text-xs">
+                      <Link
+                        to={artistPath(t.artist ?? t.channel)}
+                        className="text-muted-foreground block truncate text-xs hover:underline"
+                      >
                         {t.channel}
-                      </span>
+                      </Link>
                     </TableData>
                     <TableData className="tabular-nums">{t.plays}</TableData>
                   </TableRow>

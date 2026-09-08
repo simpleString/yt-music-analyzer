@@ -93,6 +93,68 @@ def top_artists(
     ]
 
 
+def artists(session: Session, limit: int = 20000) -> list[dict]:
+    """All artists (canonical) with plays/track counts and last listen."""
+    join, params = _music_listen_join()
+    rows = session.execute(
+        text(
+            f"SELECT {ARTIST_EXPR} AS artist, COUNT(*) AS plays, "
+            "COUNT(DISTINCT t.video_id) AS tracks, MAX(l.listened_at) AS last "
+            + join
+            + f" AND {ARTIST_EXPR} != '' GROUP BY artist ORDER BY plays DESC LIMIT :lim"
+        ),
+        {**params, "lim": limit},
+    ).all()
+    return [
+        {"channel": r[0], "plays": r[1], "tracks": r[2], "last_listen": r[3]}
+        for r in rows
+    ]
+
+
+def artist_summary(
+    session: Session,
+    name: str,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict | None:
+    """Header stats for the artist page (same canonical artist as top_artists)."""
+    join, params = _music_listen_join(date_from, date_to)
+    match = f"{ARTIST_EXPR} = :artist"
+    row = session.execute(
+        text(
+            "SELECT COUNT(*), COUNT(DISTINCT t.video_id), "
+            "MIN(l.listened_at), MAX(l.listened_at) "
+            + join
+            + f" AND {match}"
+        ),
+        {**params, "artist": name},
+    ).one()
+    if not row[0]:
+        return None
+    top = session.execute(
+        text(
+            "SELECT t.video_id, t.title, t.channel, COUNT(*) AS plays "
+            + join
+            + f" AND {match} "
+            + "GROUP BY t.video_id ORDER BY plays DESC, t.title LIMIT 1"
+        ),
+        {**params, "artist": name},
+    ).one()
+    return {
+        "name": name,
+        "plays": int(row[0] or 0),
+        "tracks": int(row[1] or 0),
+        "first_listen": row[2],
+        "last_listen": row[3],
+        "top_track": {
+            "video_id": top[0],
+            "title": top[1],
+            "channel": top[2],
+            "plays": int(top[3] or 0),
+        },
+    }
+
+
 def top_tracks(
     session: Session,
     limit: int = 15,
@@ -102,14 +164,21 @@ def top_tracks(
     join, params = _music_listen_join(date_from, date_to)
     rows = session.execute(
         text(
-            "SELECT t.video_id, t.title, t.channel, COUNT(*) AS plays "
+            f"SELECT t.video_id, t.title, t.channel, {ARTIST_EXPR} AS artist, "
+            "COUNT(*) AS plays "
             + join
             + " GROUP BY t.video_id ORDER BY plays DESC LIMIT :lim"
         ),
         {**params, "lim": limit},
     ).all()
     return [
-        {"video_id": r[0], "title": r[1], "channel": r[2], "plays": r[3]}
+        {
+            "video_id": r[0],
+            "title": r[1],
+            "channel": r[2],
+            "artist": r[3],
+            "plays": r[4],
+        }
         for r in rows
     ]
 

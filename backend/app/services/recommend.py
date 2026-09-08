@@ -6,7 +6,6 @@ import time
 import httpx
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 from sqlmodel import Session, select
 
@@ -560,8 +559,10 @@ def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
         by_artist: dict[str, list[str]] = {}
         for f in usable:
             row = session.get(Track, f.track_id)
-            if row is not None and row.channel:
-                by_artist.setdefault(row.channel, []).append(f.track_id)
+            if row is not None:
+                name = row.artist_canonical or row.channel
+                if name:
+                    by_artist.setdefault(name, []).append(f.track_id)
         if len(by_artist) < 2:
             return None
 
@@ -571,86 +572,42 @@ def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
             )
 
         selected = session.get(Track, track_id)
-        if selected is None or selected.channel not in by_artist:
+        if selected is None:
             return None
-        sel_vec = artist_vec(by_artist[selected.channel])
+        sel_name = selected.artist_canonical or selected.channel
+        if sel_name not in by_artist:
+            return None
+        sel_vec = artist_vec(by_artist[sel_name])
 
         scored: list[tuple[float, str]] = []
-        for ch, ids in by_artist.items():
-            if ch == selected.channel:
+        for name, ids in by_artist.items():
+            if name == sel_name:
                 continue
             vec = artist_vec(ids)
             dist = float(np.linalg.norm(sel_vec - vec))
-            scored.append((dist, ch))
+            scored.append((dist, name))
         scored.sort(key=lambda x: x[0])
 
         result = []
-        for dist, ch in scored[:k]:
+        for dist, name in scored[:k]:
             tracks = session.exec(
-                select(Track).where(Track.channel == ch, Track.is_music == True)  # noqa: E712
+                select(Track).where(
+                    (Track.artist_canonical == name)
+                    | ((Track.artist_canonical == "") & (Track.channel == name)),
+                    Track.is_music == True,  # noqa: E712
+                )
             ).all()
             plays = sum(t.play_count for t in tracks)
             result.append(
                 {
-                    "channel": ch,
+                    "channel": name,
                     "distance": round(dist, 3),
-                    "tracks_analyzed": len(by_artist[ch]),
+                    "tracks_analyzed": len(by_artist[name]),
                     "tracks_total": len(tracks),
                     "plays": plays,
                 }
             )
         return result
-
-
-def similar_tracks(
-    track_id: str, offset: int = 0, limit: int = 6
-) -> tuple[list[dict], int] | None:
-    """Simple similarity over numeric features (fallback without v2).
-
-    Returns (result page, total), like similar_tracks_essentia.
-    None — not enough data.
-    """
-    with Session(engine) as session:
-        features = session.exec(select(AudioFeatures)).all()
-        if len(features) < 2:
-            return None
-        selected = session.get(AudioFeatures, track_id)
-        if selected is None:
-            return None
-        if selected.source == "audio":
-            pool = [f for f in features if f.source == "audio"]
-            cols = ["tempo", "energy", "danceability", "acousticness"]
-        else:
-            pool = features
-            cols = MOOD_COLS
-        if len(pool) < 2:
-            pool, cols = features, MOOD_COLS
-        X = np.array([[getattr(f, c) for c in cols] for f in pool])
-        X_scaled = StandardScaler().fit_transform(X)
-        idx_map = {f.track_id: i for i, f in enumerate(pool)}
-        if track_id not in idx_map:
-            return None
-        k = min(offset + limit + 1, len(pool))
-        nn = NearestNeighbors(n_neighbors=k, metric="euclidean")
-        nn.fit(X_scaled)
-        dist, ind = nn.kneighbors([X_scaled[idx_map[track_id]]])
-        result = []
-        for d, i in zip(dist[0], ind[0]):
-            fid = pool[int(i)].track_id
-            if fid == track_id:
-                continue
-            t = session.get(Track, fid)
-            if t is None:
-                continue
-            result.append(
-                {
-                    "track": t,
-                    "distance": round(float(d), 3),
-                    "tempo": pool[int(i)].tempo,
-                    "match": "",
-                }
-            )
-        return result[offset : offset + limit], len(pool) - 1
 
 
 def _throttle() -> None:

@@ -63,6 +63,7 @@ export interface TrackDetail {
   video_id: string
   title: string
   channel: string
+  artist?: string
   play_count: number
   duration: number | null
   cluster_id: number | null
@@ -104,6 +105,7 @@ export interface TrackListItem {
   video_id: string
   title: string
   channel: string
+  artist?: string
   play_count: number
   duration: number | null
   cluster_id: number | null
@@ -157,6 +159,23 @@ export interface TracksParams {
   genre: string
   language: string
   instrumental: boolean
+  artist?: string
+}
+
+export interface ArtistTopTrack {
+  video_id: string
+  title: string
+  channel: string
+  plays: number
+}
+
+export interface ArtistSummary {
+  name: string
+  plays: number
+  tracks: number
+  first_listen: string | null
+  last_listen: string | null
+  top_track: ArtistTopTrack
 }
 
 export interface ClusterOption {
@@ -182,10 +201,18 @@ export interface TopArtist {
   tracks: number
 }
 
+export interface ArtistListItem {
+  channel: string
+  plays: number
+  tracks: number
+  last_listen: string | null
+}
+
 export interface TopTrack {
   video_id: string
   title: string
   channel: string
+  artist?: string
   plays: number
 }
 
@@ -214,6 +241,7 @@ export interface TrackInfo {
   video_id: string
   title: string
   channel: string
+  artist?: string
   play_count: number
 }
 
@@ -332,6 +360,7 @@ export const api = {
     genre,
     language,
     instrumental,
+    artist,
   }: TracksParams) => {
     const sp = new URLSearchParams({
       q,
@@ -345,8 +374,12 @@ export const api = {
     if (genre) sp.set("genre", genre)
     if (language) sp.set("language", language)
     if (instrumental) sp.set("instrumental", "true")
+    if (artist) sp.set("artist", artist)
     return getJson<TracksData>(`/api/tracks?${sp}`)
   },
+  artist: (name: string) =>
+    getJson<ArtistSummary>(`/api/artist?name=${encodeURIComponent(name)}`),
+  artists: () => getJson<ArtistListItem[]>("/api/artists"),
   clusters: () => getJson<ClusterOption[]>("/api/clusters"),
   genres: () => getJson<GenreOption[]>("/api/genres"),
   languages: () => getJson<LanguageOption[]>("/api/languages"),

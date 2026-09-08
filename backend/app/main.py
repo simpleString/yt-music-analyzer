@@ -32,7 +32,6 @@ from app.services.music_filter import run_filter
 from app.services.recommend import (
     mb_for_track,
     similar_artists,
-    similar_tracks,
     similar_tracks_v2,
     similar_tracks_essentia,
 )
@@ -76,6 +75,7 @@ def _track_payload(t: Track) -> dict:
         "video_id": t.video_id,
         "title": t.title,
         "channel": t.channel,
+        "artist": t.artist_canonical or t.channel,
         "play_count": t.play_count,
     }
 
@@ -182,6 +182,11 @@ def _f(v: float | None, nd: int = 2) -> float | None:
     return round(v, nd) if v is not None else None
 
 
+ARTIST_EXPR = func.coalesce(
+    func.nullif(Track.artist_canonical, ""), Track.channel
+)
+
+
 @app.get("/api/tracks")
 def api_tracks(
     q: str = "",
@@ -194,6 +199,7 @@ def api_tracks(
     genre: str = "",
     language: str = "",
     instrumental: bool = False,
+    artist: str = "",
 ) -> dict:
     import json as _json
 
@@ -213,6 +219,8 @@ def api_tracks(
     if order not in ("asc", "desc"):
         order = "desc"
     conditions = [Track.is_music == (not hidden)]  # noqa: E712
+    if artist.strip():
+        conditions.append(ARTIST_EXPR == artist.strip())
     term = q.strip()
     if term:
         # REGEXP (Python-backed, Unicode-aware) — SQLite lower()/LIKE are
@@ -594,6 +602,24 @@ def api_dashboard(
         }
 
 
+@app.get("/api/artists")
+def api_artists() -> list[dict]:
+    with Session(engine) as session:
+        return stats_svc.artists(session)
+
+
+@app.get("/api/artist")
+def api_artist(name: str = "") -> dict:
+    name = name.strip()
+    if not name:
+        raise HTTPException(400, "Empty artist name")
+    with Session(engine) as session:
+        summary = stats_svc.artist_summary(session, name)
+        if summary is None:
+            raise HTTPException(404, "Artist not found")
+        return summary
+
+
 def _parse_date(value: str | None, name: str):
     if value is None or not value:
         return None
@@ -670,8 +696,6 @@ def api_recommendations_similar(
         return {"similar": [], "total": 0}
     sim = similar_tracks_v2(track_id, offset=offset, limit=limit)
     if sim is None:
-        sim = similar_tracks(track_id, offset=offset, limit=limit)
-    if sim is None:
         return {"similar": [], "total": 0}
     items, total = sim
     result = []
@@ -709,6 +733,7 @@ def api_recommendations_essentia(
                         "video_id": t.video_id,
                         "title": t.title,
                         "channel": t.channel,
+                        "artist": t.artist_canonical or t.channel,
                         "is_music": t.is_music,
                     },
                     "distance": s["distance"],

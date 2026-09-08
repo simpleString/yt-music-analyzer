@@ -7,11 +7,17 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
-import { Link, useNavigate } from "react-router-dom";
+import {
+  Link,
+  useLocation,
+  useNavigationType,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
 import { Ban, Check, EyeOff } from "lucide-react";
 
 import { api, type TrackListItem, type TrackSort } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, artistPath } from "@/lib/utils";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -168,33 +174,64 @@ const SORT_COLUMNS: { key: TrackSort; label: string; align?: "right" }[] = [
 
 export function Tracks() {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
-  const [input, setInput] = useState("");
-  const [q, setQ] = useState("");
-  const [sort, setSort] = useState<TrackSort>("play_count");
-  const [order, setOrder] = useState<"asc" | "desc">("desc");
-  const [clusterId, setClusterId] = useState<number | null>(null);
-  const [hidden, setHidden] = useState(false);
-  const [genre, setGenre] = useState("");
-  const [language, setLanguage] = useState("");
-  const [instrumental, setInstrumental] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // filters live in the URL: shareable, and Back returns to the
+  // previous filter state; page is replaced in-place while scrolling
+  const setParams = (
+    updates: Record<string, string | number | boolean | null>,
+    replace = false,
+  ) => {
+    const next = new URLSearchParams(searchParams);
+    for (const [k, v] of Object.entries(updates)) {
+      if (v === null || v === "" || v === false) next.delete(k);
+      else next.set(k, String(v));
+    }
+    setSearchParams(next, { replace });
+  };
+
+  const [input, setInput] = useState(() => searchParams.get("q") ?? "");
+  const q = searchParams.get("q") ?? "";
+  const sort = (searchParams.get("sort") as TrackSort) || "play_count";
+  const order = (searchParams.get("order") as "asc" | "desc") || "desc";
+  const clusterParam = searchParams.get("cluster");
+  const clusterId = clusterParam != null ? Number(clusterParam) : null;
+  const hidden = searchParams.get("hidden") === "1";
+  const genre = searchParams.get("genre") ?? "";
+  const language = searchParams.get("language") ?? "";
+  const instrumental = searchParams.get("instrumental") === "1";
+  const targetPage = Math.max(1, Number(searchParams.get("page")) || 1);
   const [showFilters, setShowFilters] = useState(false);
 
-  const applySearch = () => setQ(input.trim());
+  // back/forward navigation: sync the raw input with the URL query
+  useEffect(() => {
+    setInput((cur) => (cur.trim() === q ? cur : q));
+  }, [q]);
+
+  const applySearch = () => setParams({ q: input.trim() || null, page: null });
 
   useEffect(() => {
-    const t = setTimeout(() => setQ(input.trim()), 300);
+    const t = setTimeout(() => {
+      const trimmed = input.trim();
+      if (trimmed !== q) setParams({ q: trimmed || null, page: null }, true);
+    }, 300);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [input]);
 
   const clearFilters = () => {
     setInput("");
-    setQ("");
-    setClusterId(null);
-    setHidden(false);
-    setGenre("");
-    setLanguage("");
-    setInstrumental(false);
+    setParams({
+      q: null,
+      cluster: null,
+      hidden: null,
+      genre: null,
+      language: null,
+      instrumental: null,
+      page: null,
+    });
   };
 
   const { data: clusters } = useQuery({
@@ -275,20 +312,79 @@ export function Tracks() {
     [data],
   );
   const total = data?.pages[0]?.total ?? 0;
+  const loadedPages = data?.pages.length ?? 0;
+  const lastLoadedPage = data?.pages[data.pages.length - 1]?.page ?? 1;
+
+  // deepest loaded page → URL (replace: scrolling must not spam history)
+  useEffect(() => {
+    if (lastLoadedPage > targetPage) setParams({ page: lastLoadedPage }, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastLoadedPage, targetPage]);
+
+  // returning back: fetch pages 1..targetPage to rebuild the list
+  const restoring =
+    Boolean(searchParams.get("page")) && loadedPages < targetPage;
+  useEffect(() => {
+    if (restoring && hasNextPage && !isFetchingNextPage) fetchNextPage();
+  }, [restoring, hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  // identity of the filter combo (page excluded: it changes on every
+  // infinite-scroll replace) — the restore effect runs once per combo
+  const navType = useNavigationType();
+  const comboKey = useMemo(() => {
+    const sp = new URLSearchParams(searchParams);
+    sp.delete("page");
+    const s = sp.toString();
+    return `tracks-scroll:${location.pathname}${s ? `?${s}` : ""}`;
+  }, [location.pathname, searchParams]);
+  const restoredCombo = useRef<string | null>(null);
 
   const controlsRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
   const virtualizer = useWindowVirtualizer({
     count: rows.length,
-    estimateSize: () => 60,
+    // rows are fixed-height (h-12): the estimate matches the real size,
+    // so cached offsets are exact and scroll restore lands precisely
+    estimateSize: () => 48,
     overscan: 10,
     scrollMargin,
   });
 
   useEffect(() => {
-    window.scrollTo({ top: 0 });
-  }, [q, sort, order, clusterId, hidden, genre, language, instrumental]);
+    // wait for the first page: hasNextPage is undefined-false while pending
+    if (isPending || data === undefined) return;
+    if (restoredCombo.current === comboKey) return;
+    // the user opened a track from this filter combo: scroll back until
+    // that track's row is in the viewport
+    const openId =
+      navType === "POP" ? sessionStorage.getItem("tracks-open-track") : null;
+    const idx = openId ? rows.findIndex((r) => r.video_id === openId) : -1;
+    // keep fetching pages until the target row is loaded
+    if (idx === -1 && hasNextPage && (openId || loadedPages < targetPage)) {
+      if (!isFetchingNextPage) fetchNextPage();
+      return;
+    }
+    restoredCombo.current = comboKey;
+    if (openId) sessionStorage.removeItem("tracks-open-track");
+    if (idx >= 0) {
+      virtualizer.scrollToIndex(idx);
+    } else {
+      window.scrollTo({ top: 0 });
+    }
+  }, [
+    isPending,
+    data,
+    rows,
+    loadedPages,
+    targetPage,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+    comboKey,
+    navType,
+    virtualizer,
+  ]);
 
   useEffect(() => {
     const el = controlsRef.current;
@@ -327,10 +423,9 @@ export function Tracks() {
 
   const toggleSort = (key: TrackSort) => {
     if (sort === key) {
-      setOrder((o) => (o === "desc" ? "asc" : "desc"));
+      setParams({ order: order === "desc" ? "asc" : "desc", page: null });
     } else {
-      setSort(key);
-      setOrder("desc");
+      setParams({ sort: key, order: "desc", page: null });
     }
   };
 
@@ -380,7 +475,12 @@ export function Tracks() {
                 <input
                   type="checkbox"
                   checked={hidden}
-                  onChange={(e) => setHidden(e.target.checked)}
+                  onChange={(e) =>
+                    setParams({
+                      hidden: e.target.checked ? "1" : null,
+                      page: null,
+                    })
+                  }
                 />
                 Excluded
               </label>
@@ -388,7 +488,12 @@ export function Tracks() {
                 <input
                   type="checkbox"
                   checked={instrumental}
-                  onChange={(e) => setInstrumental(e.target.checked)}
+                  onChange={(e) =>
+                    setParams({
+                      instrumental: e.target.checked ? "1" : null,
+                      page: null,
+                    })
+                  }
                   title="Only tracks without vocals"
                 />
                 Instrumental
@@ -398,7 +503,7 @@ export function Tracks() {
               <Select
                 value={clusterId != null ? String(clusterId) : "all"}
                 onValueChange={(v) =>
-                  setClusterId(v === "all" ? null : Number(v))
+                  setParams({ cluster: v === "all" ? null : v, page: null })
                 }
               >
                 <SelectTrigger className="w-60">
@@ -415,7 +520,9 @@ export function Tracks() {
               </Select>
               <Select
                 value={genre || "any"}
-                onValueChange={(v) => setGenre(v === "any" ? "" : v)}
+                onValueChange={(v) =>
+                  setParams({ genre: v === "any" ? null : v, page: null })
+                }
               >
                 <SelectTrigger className="w-44">
                   <SelectValue placeholder="Any genre" />
@@ -431,7 +538,9 @@ export function Tracks() {
               </Select>
               <Select
                 value={language || "any"}
-                onValueChange={(v) => setLanguage(v === "any" ? "" : v)}
+                onValueChange={(v) =>
+                  setParams({ language: v === "any" ? null : v, page: null })
+                }
               >
                 <SelectTrigger className="w-40">
                   <SelectValue placeholder="Any language" />
@@ -499,7 +608,7 @@ export function Tracks() {
             <div
               className={cn(
                 GRID,
-                "sticky z-10 min-w-[80rem] border-b border-[#999999] bg-[#eeeeee] py-1 text-xs font-bold text-black whitespace-nowrap",
+                "sticky z-10 h-12 min-w-[80rem] border-b border-[#999999] bg-[#eeeeee] text-xs font-bold text-black whitespace-nowrap",
               )}
               style={{
                 top: "calc(var(--header-h, 0px) + var(--controls-h, 0px))",
@@ -555,7 +664,7 @@ export function Tracks() {
                     }}
                     className={cn(
                       GRID,
-                      "hover:bg-[#ffffcc] cursor-pointer border-b border-[#e0e0e0]",
+                      "h-12 hover:bg-[#ffffcc] cursor-pointer border-b border-[#e0e0e0]",
                     )}
                     title={techTooltip(t)}
                     onClick={(e) => {
@@ -564,6 +673,7 @@ export function Tracks() {
                         (e.target.closest("a") || e.target.closest("button"))
                       )
                         return;
+                      sessionStorage.setItem("tracks-open-track", t.video_id);
                       navigate(`/track/${t.video_id}`);
                     }}
                   >
@@ -588,30 +698,37 @@ export function Tracks() {
                         href={`https://www.youtube.com/watch?v=${t.video_id}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="block truncate text-sm hover:underline"
+                        className="block truncate text-sm hover:underline max-w-fit"
                         title={t.title}
                       >
                         {t.title}
                       </a>
-                      <span className="text-muted-foreground block truncate text-xs">
+                      <Link
+                        to={artistPath(t.artist ?? t.channel)}
+                        className="text-muted-foreground block truncate text-xs hover:underline"
+                      >
                         {t.channel}
-                      </span>
+                      </Link>
                     </span>
-                    <span className="flex flex-col items-start gap-0.5">
+                    <span className="flex min-w-0 flex-col items-start gap-0.5 overflow-hidden">
                       {t.cluster_name ? (
-                        <Badge variant="outline">{t.cluster_name}</Badge>
+                        <Badge variant="outline" className="max-w-full">
+                          <span className="truncate">{t.cluster_name}</span>
+                        </Badge>
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}
                       {t.genres?.[0] && (
-                        <Badge variant="secondary" className="font-normal">
-                          {genreLabel(t.genres[0])}
-                          {t.language ? ` · ${t.language}` : ""}
+                        <Badge variant="secondary" className="max-w-full font-normal">
+                          <span className="truncate">
+                            {genreLabel(t.genres[0])}
+                            {t.language ? ` · ${t.language}` : ""}
+                          </span>
                         </Badge>
                       )}
                       {!t.genres?.length && t.language && (
-                        <Badge variant="secondary" className="font-normal">
-                          {t.language}
+                        <Badge variant="secondary" className="max-w-full font-normal">
+                          <span className="truncate">{t.language}</span>
                         </Badge>
                       )}
                     </span>

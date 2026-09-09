@@ -185,6 +185,12 @@ if needed. On WSL, browser cookies are not reachable at all — use a manual
 **Port 8000 busy** — stop the other process or run uvicorn with another
 `--port` (frontend proxy in dev assumes 8000).
 
+## License
+
+MIT — see [LICENSE](LICENSE). Third-party tools and models used at runtime
+(POT token server, Essentia and its model zoo, Whisper, yt-dlp…) keep their
+own licenses — some Essentia models are non-commercial (CC-BY-NC-SA).
+
 ## Acknowledgments
 
 - [Essentia](https://essentia.upf.edu/) (UPF) — audio feature models

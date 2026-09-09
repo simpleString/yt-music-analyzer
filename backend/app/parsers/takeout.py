@@ -5,7 +5,6 @@ from datetime import datetime, timezone as dt_timezone
 from zoneinfo import ZoneInfo
 
 VIDEO_ID_RE = re.compile(r"[?&]v=([\w-]{11})")
-# "Просмотрено видео" = "Watched" in Russian-language Takeout exports — keep both
 WATCH_PREFIX_RE = re.compile(r"^(Просмотрено видео|Watched)\s*")
 GONE_MARKERS = ("недоступна", "unavailable")
 

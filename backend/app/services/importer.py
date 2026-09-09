@@ -59,8 +59,6 @@ def run_import(
                 if track.channel:
                     track.artist_canonical = normalize_artist(track.channel)
                 track.header = e.header
-                # data comparison: matches the Russian-language header in
-                # a YouTube Takeout export ("YouTube Музыка" = "YouTube Music")
                 if e.header == "YouTube Музыка" and track.is_music is None:
                     track.is_music = True
                     track.music_reason = "yt-music-app"
@@ -75,6 +73,11 @@ def run_import(
                     # objects pile up in the session until the end of the
                     # import (memory leak → OOM)
                     session.expunge_all()
+                    # committed tracks are expired AND detached now —
+                    # keeping them in the memo would blow up the next
+                    # attribute read with DetachedInstanceError; the
+                    # session.get() above re-selects them instead
+                    tracks.clear()
                     new_listens = []
                     if jobs.should_stop("import", stop):
                         break

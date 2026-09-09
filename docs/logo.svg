@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="12 14 64 70" width="160" height="175">
+  <!-- yt-music-analyzer mascot: a music note scanning with a magnifying glass -->
+
+  <!-- ground shadow -->
+  <ellipse cx="34" cy="76" rx="17" ry="2.5" fill="#000000" opacity="0.08"/>
+
+  <g>
+    <!-- gentle bob of the whole note -->
+    <animateTransform attributeName="transform" type="translate"
+                      values="0 0; 0 -1.6; 0 0" dur="2.4s"
+                      repeatCount="indefinite" calcMode="spline"
+                      keySplines="0.45 0 0.55 1; 0.45 0 0.55 1"/>
+    <!-- the note -->
+    <path d="M36.8 65 V 33" stroke="#111111" stroke-width="2.6" fill="none"/>
+    <path d="M36.8 33 q 11 2 13 13 q -2.5 -7 -13 -6.5 z" fill="#111111"/>
+    <ellipse cx="30" cy="66" rx="8.2" ry="6.2" transform="rotate(-15 30 66)" fill="#111111"/>
+    <!-- googly eye -->
+    <circle cx="29.5" cy="64" r="4.4" fill="#ffffff" stroke="#111111" stroke-width="0.9"/>
+    <circle cx="27.7" cy="64.2" r="1.9" fill="#111111">
+      <animate attributeName="cx" values="27.7; 28.6; 27.7" dur="3.2s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="64.2; 63.4; 64.2" dur="3.2s" repeatCount="indefinite"/>
+    </circle>
+
+    <!-- magnifying glass: slow scanning swing -->
+    <g>
+      <animateTransform attributeName="transform" type="rotate"
+                        values="-4 39 65; 5 39 65; -4 39 65" dur="2.8s"
+                        repeatCount="indefinite" calcMode="spline"
+                        keySplines="0.45 0 0.55 1; 0.45 0 0.55 1"/>
+      <line x1="39" y1="65" x2="51" y2="55.5" stroke="#555555" stroke-width="3.2" stroke-linecap="round"/>
+      <circle cx="53" cy="53" r="8.6" fill="#bcd9f5" fill-opacity="0.5" stroke="#4d4d4d" stroke-width="2.4"/>
+      <path d="M48.6 50.4 q 3 -3 6.8 -2.2" stroke="#ffffff" stroke-width="1.6" fill="none" opacity="0.85" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <!-- sparkle: "found something!" -->
+  <g>
+    <animateTransform attributeName="transform" type="rotate"
+                      values="0 66 40; 180 66 40; 360 66 40" dur="3.5s"
+                      repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.25; 1; 0.25" dur="1.7s" repeatCount="indefinite"/>
+    <path transform="translate(66 40)" d="M0 -5 L1.4 -1.4 L5 0 L1.4 1.4 L0 5 L-1.4 1.4 L-5 0 L-1.4 -1.4 Z" fill="#ff9900"/>
+  </g>
+</svg>

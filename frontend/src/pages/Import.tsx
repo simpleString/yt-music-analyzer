@@ -154,7 +154,9 @@ export function ImportPage() {
         <CardHeader>
           <CardTitle>1. Watch history (Google Takeout)</CardTitle>
           <CardDescription>
-            "YouTube watch history" file in JSON format
+            At takeout.google.com select "My Activity" → its content
+            "YouTube" → JSON format, then upload the watch history file
+            here
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-2">

@@ -209,7 +209,8 @@ async def api_import(
         raise HTTPException(
             400,
             "Failed to parse JSON. Expected a “YouTube watch history” "
-            "file from Google Takeout.",
+            "file exported via Google Takeout (My Activity → YouTube, "
+            "JSON format).",
         )
     try:
         ZoneInfo(tz.strip())

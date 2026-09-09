@@ -2,17 +2,24 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_REPO_ROOT = _BACKEND_DIR.parent
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        # absolute path: the .env next to backend/ is found no matter
+        # which directory the server was started from
+        env_file=_BACKEND_DIR / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     youtube_api_key: str = ""
     youtube_daily_quota: int = 10000
-    data_dir: Path = Path("data")
+    # anchored to the backend/ directory so the data always lands in one
+    # place even if uvicorn is started from elsewhere
+    data_dir: Path = _BACKEND_DIR / "data"
     frontend_dist: Path = _REPO_ROOT / "frontend" / "dist"
     audio_analysis_limit: int = 5
     # listen-count threshold: tracks with fewer listens are skipped

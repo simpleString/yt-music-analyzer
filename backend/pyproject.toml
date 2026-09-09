@@ -20,8 +20,10 @@ dependencies = [
     "protobug>=1.0.0",
     "yt-dlp-ejs==0.8.0",
     "onnxruntime>=1.29.0",
-    "essentia>=2.1b6.dev1438",
-    "essentia-tensorflow>=2.1b6.dev1438",
+    # no Windows wheels exist for these (upstream ships linux/macOS only);
+    # the app degrades gracefully: everything except audio analysis works
+    "essentia>=2.1b6.dev1438; sys_platform != 'win32'",
+    "essentia-tensorflow>=2.1b6.dev1438; sys_platform != 'win32'",
     "langdetect>=1.0.9",
     "faster-whisper>=1.1",
     "ytmusicapi>=1.12.2",

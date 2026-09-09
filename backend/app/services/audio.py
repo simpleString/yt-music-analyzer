@@ -143,10 +143,17 @@ def _bot_wait(stop: threading.Event, abort: threading.Event) -> None:
 
 def _prepare_cookies() -> str:
     global _cookiefile
+    path = settings.data_dir / "cookies.txt"
     if not settings.audio_cookies_from_browser:
-        return ""
+        # manual mode (e.g. WSL, where Windows browser cookies are not
+        # reachable): fall back to a user-provided Netscape cookies.txt
+        with _cookiefile_lock:
+            if path.exists() and path.stat().st_size > 100:
+                _cookiefile = path
+                return "manual cookies.txt in use"
+            _cookiefile = None
+            return ""
     with _cookiefile_lock:
-        path = settings.data_dir / "cookies.txt"
         had = _cookiefile is not None and path.exists()
         if had and time.time() - path.stat().st_mtime < COOKIE_MAX_AGE:
             return ""

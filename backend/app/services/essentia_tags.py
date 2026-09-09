@@ -42,9 +42,20 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 os.environ.setdefault("TF_NUM_INTEROP_THREADS", "1")
 os.environ.setdefault("TF_INTER_OP_PARALLELISM_THREADS", "1")
 
-import essentia
+try:
+    import essentia
 
-essentia.log.infoActive = False
+    essentia.log.infoActive = False
+except ImportError:
+    # no essentia wheels for this platform (e.g. Windows); analysis
+    # calls raise a clear error instead of crashing the app
+    essentia = None
+
+NO_ESSENTIA_MSG = (
+    "essentia is not installed on this platform (upstream ships no "
+    "Windows wheels) — audio analysis is unavailable; every other "
+    "feature works"
+)
 
 MODELS_DIR = settings.data_dir / "models"
 DISCOGS_PB = "discogs-effnet-bs64-1"
@@ -180,6 +191,8 @@ def _positive_class(classes: list[str]) -> int:
 
 def _algorithms() -> dict:
     """Shared instances (one pack per process, thread-safe via lock)."""
+    if essentia is None:
+        raise RuntimeError(NO_ESSENTIA_MSG)
     global _algos
     if _algos is not None:
         return _algos

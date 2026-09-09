@@ -1,6 +1,8 @@
 # yt-music-analyzer — backend
 
-FastAPI backend. Run from this directory:
+FastAPI backend. For the full setup guide see the [root README](../README.md).
+
+Quick dev start from this directory:
 
 ```bash
 uv sync

@@ -25,6 +25,7 @@ from app.models import (
 )
 from app.parsers.takeout import load_history_file
 from app.services import jobs as jobs_svc
+from app.services import preflight as preflight_svc
 from app.services.audio import run_audio_analysis
 from app.services.audio import analyze_one_status, analyze_track_now
 from app.services.clustering import run_clustering
@@ -56,6 +57,7 @@ _workers: dict[str, threading.Thread] = {}
 async def lifespan(app: FastAPI):
     init_db()
     jobs_svc.cancel_orphans()
+    preflight_svc.run_preflight()
     yield
     # on server shutdown (Ctrl+C/reload) ask background jobs
     # to finish — otherwise non-daemon threads keep working through the queue
@@ -1225,13 +1227,13 @@ SETTINGS_FIELDS: list[dict] = [
         "key": "audio_cookies_from_browser",
         "type": "str",
         "label": "Browser for cookies",
-        "hint": "yt-dlp takes cookies from this browser (empty — don't use).",
+        "hint": "yt-dlp takes cookies from this browser (chrome, firefox, brave…; empty — don't use). Empty also enables a manual data/cookies.txt (WSL).",
     },
     {
         "key": "audio_cookies_keyring",
         "type": "str",
         "label": "Password keyring",
-        "hint": "Keyring used to decrypt cookies (basictext, gnomelib…).",
+        "hint": "Linux only: keyring used to decrypt cookies (basictext, gnomekeyring, kwallet). Ignored on macOS/Windows.",
     },
     {
         "key": "mb_enabled",

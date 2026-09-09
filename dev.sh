@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Dev: backend (uvicorn) + frontend (vite) одновременно, Ctrl+C останавливает оба.
+# Dev: backend (uvicorn --reload) + frontend (vite dev server) together.
+# Ctrl+C stops both. Requires the one-time setup: ./setup.sh
 set -euo pipefail
 
 API_HOST=127.0.0.1
@@ -10,7 +11,7 @@ wait_for_port() {
   local host=$1 port=$2 deadline=$(( SECONDS + WAIT_SECONDS ))
   until (exec 3<>"/dev/tcp/${host}/${port}") 2>/dev/null; do
     if (( SECONDS >= deadline )); then
-      echo "dev.sh: backend не поднялся на ${host}:${port} за ${WAIT_SECONDS}s" >&2
+      echo "dev.sh: backend did not come up on ${host}:${port} within ${WAIT_SECONDS}s" >&2
       return 1
     fi
     sleep 0.5

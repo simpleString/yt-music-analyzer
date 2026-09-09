@@ -21,10 +21,16 @@ from app.config import settings
 # silence TensorFlow INFO/WARNING spam about CUDA probing (before TF is loaded)
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
-import essentia
+try:
+    import essentia
 
-# essentia INFO channel (MusicExtractorSVM, model loading) — discarded
-essentia.log.infoActive = False
+    # essentia INFO channel (MusicExtractorSVM, model loading) — discarded
+    essentia.log.infoActive = False
+except ImportError:
+    # no essentia wheels for this platform (e.g. Windows)
+    essentia = None
+
+from app.services.essentia_tags import NO_ESSENTIA_MSG, model_lock as _model_lock
 
 MODELS_DIR = settings.data_dir / "models"
 TEMPO_CNN_PB = "deeptemp-k16-3"
@@ -56,6 +62,8 @@ def ensure_models(progress_cb=None, should_stop=None) -> None:
 
 def _algorithms() -> dict:
     """Shared instances (essentia instances are not thread-safe)."""
+    if essentia is None:
+        raise RuntimeError(NO_ESSENTIA_MSG)
     global _algos
     if _algos is not None:
         return _algos

@@ -48,6 +48,9 @@ def repair() -> None:
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        # essentia is not installed on Windows at all (no upstream wheels)
+        sys.exit(0)
     if ok():
         sys.exit(0)
     print(

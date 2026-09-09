@@ -424,7 +424,7 @@ export function TrackCard() {
     enabled: !!videoId,
   });
 
-  const { data: ytmData } = useQuery({
+  const { data: ytmData, isPending: ytmPending } = useQuery({
     queryKey: ["youtube-similar", videoId],
     queryFn: () => api.youtubeSimilar(videoId!),
     enabled: !!videoId,
@@ -461,19 +461,19 @@ export function TrackCard() {
 
   // history/mix tables are fetched in one request (capped) and paginated
   // client-side with the shared "Show more" button
-  const { data: coData } = useQuery({
+  const { data: coData, isPending: coPending } = useQuery({
     queryKey: ["co-listened", videoId],
     queryFn: () => api.coListened(videoId!, 50),
     enabled: !!videoId,
   });
 
-  const { data: nextData } = useQuery({
+  const { data: nextData, isPending: nextPending } = useQuery({
     queryKey: ["next-tracks", videoId],
     queryFn: () => api.nextTracks(videoId!, 50),
     enabled: !!videoId,
   });
 
-  const { data: mixData } = useQuery({
+  const { data: mixData, isPending: mixPending } = useQuery({
     queryKey: ["mixable", videoId],
     queryFn: () => api.mixable(videoId!, 50),
     enabled: !!videoId,
@@ -784,7 +784,7 @@ export function TrackCard() {
         </Card>
       )}
 
-      {/* Similar tracks (v2 + Essentia + YouTube, stacked) */}
+      {/* Similar tracks (v2 embeddings) */}
       <Card>
         <CardHeader>
           <CardTitle>Similar tracks</CardTitle>
@@ -890,151 +890,7 @@ export function TrackCard() {
         </CardContent>
       </Card>
 
-      {/* Listened together (history sessions, co-occurrence) */}
-      {coItems.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Listened together</CardTitle>
-            <CardDescription className="text-xs">
-              shares listening sessions with this track in your history ·{" "}
-              {coData?.items.length ?? 0} loaded
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <TrackTable
-              grid={CO_GRID}
-                extraHead={
-                  <>
-                    <span
-                      className="text-right"
-                      title="how many listening sessions they share"
-                    >
-                      sessions
-                    </span>
-                    <span className="text-right">last together</span>
-                  </>
-                }
-            >
-              {coItems.map((item, i) => (
-                <TrackRow
-                  key={item.track.video_id}
-                  videoId={item.track.video_id}
-                  title={item.track.title}
-                  channel={item.track.channel}
-                  artist={item.track.artist}
-                  plays={item.track.play_count}
-                  info={item.info}
-                  index={i}
-                  grid={CO_GRID}
-                  extra={
-                    <>
-                      <span className="text-right text-sm tabular-nums">
-                        {item.cnt}
-                      </span>
-                      <span className="text-muted-foreground text-right text-xs tabular-nums">
-                        {fmtDate(item.last_listen)}
-                      </span>
-                    </>
-                  }
-                />
-              ))}
-            </TrackTable>
-            {coData && coData.items.length > coShown ? (
-              <div className="mt-2 flex justify-center">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCoShown((v) => v + 10)}
-                >
-                  Show more ({coData.items.length - coShown})
-                </Button>
-              </div>
-            ) : (
-              <p className="text-muted-foreground py-1.5 text-center text-xs">
-                showing all {coItems.length} tracks
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* What comes next (Markov over sessions) */}
-      {nextItems.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>What comes next</CardTitle>
-            <CardDescription className="text-xs">
-              tracks that usually follow this one in your history ·{" "}
-              {nextData?.items.length ?? 0} loaded
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <TrackTable
-              grid={NEXT_GRID}
-                extraHead={
-                  <>
-                    <span
-                      className="text-right"
-                      title="how many times it followed this track"
-                    >
-                      next
-                    </span>
-                    <span
-                      className="text-right"
-                      title="probability that this track is followed by it"
-                    >
-                      P
-                    </span>
-                    <span className="text-right">last together</span>
-                  </>
-                }
-            >
-              {nextItems.map((item, i) => (
-                <TrackRow
-                  key={item.track.video_id}
-                  videoId={item.track.video_id}
-                  title={item.track.title}
-                  channel={item.track.channel}
-                  artist={item.track.artist}
-                  plays={item.track.play_count}
-                  info={item.info}
-                  index={i}
-                  grid={NEXT_GRID}
-                  extra={
-                    <>
-                      <span className="text-right text-sm tabular-nums">
-                        {item.cnt}×
-                      </span>
-                      <span className="text-right text-xs tabular-nums">
-                        {Math.round((item.p ?? 0) * 100)}%
-                      </span>
-                      <span className="text-muted-foreground text-right text-xs tabular-nums">
-                        {fmtDate(item.last_listen)}
-                      </span>
-                    </>
-                  }
-                />
-              ))}
-            </TrackTable>
-            {nextData && nextData.items.length > nextShown ? (
-              <div className="mt-2 flex justify-center">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setNextShown((v) => v + 10)}
-                >
-                  Show more ({nextData.items.length - nextShown})
-                </Button>
-              </div>
-            ) : (
-              <p className="text-muted-foreground py-1.5 text-center text-xs">
-                showing all {nextItems.length} tracks
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
+      {/* Similar tracks (Essentia tags) */}
       <Card>
         <CardHeader>
           <CardTitle>Similar tracks (Essentia)</CardTitle>
@@ -1125,9 +981,8 @@ export function TrackCard() {
           )}
         </CardContent>
       </Card>
-
       {/* Similar tracks from YouTube Music (native radio) */}
-      {ytmData?.enabled && (
+      {(ytmPending || ytmData?.enabled) && (
         <Card>
           <CardHeader>
             <CardTitle>Similar tracks (YouTube)</CardTitle>
@@ -1136,7 +991,9 @@ export function TrackCard() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {ytmVisible.length > 0 ? (
+            {ytmPending ? (
+              <LoadingNote size="sm" />
+            ) : ytmVisible.length > 0 ? (
               <>
                 <YtmTable items={ytmVisible} />
                 {ytmShown < ytmItems.length ? (
@@ -1163,18 +1020,179 @@ export function TrackCard() {
           </CardContent>
         </Card>
       )}
-
-      {/* Mix-compatible (Camelot wheel + BPM) */}
-      {mixData?.available && mixData.items.length > 0 && (
+      {/* Listened together (history sessions, co-occurrence) */}
+      {(coPending || coItems.length > 0) && (
         <Card>
           <CardHeader>
-            <CardTitle>Mix-compatible</CardTitle>
+            <CardTitle>Listened together</CardTitle>
             <CardDescription className="text-xs">
-              harmonic mixing · seed {mixData.seed.key} ({mixData.seed.camelot})
-              · {Math.round(mixData.seed.tempo)} BPM · {mixData.total} total
+              shares listening sessions with this track in your history ·{" "}
+              {coData?.items.length ?? 0} loaded
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {coPending ? (
+              <LoadingNote size="sm" />
+            ) : (
+              <>
+            <TrackTable
+              grid={CO_GRID}
+                extraHead={
+                  <>
+                    <span
+                      className="text-right"
+                      title="how many listening sessions they share"
+                    >
+                      sessions
+                    </span>
+                    <span className="text-right">last together</span>
+                  </>
+                }
+            >
+              {coItems.map((item, i) => (
+                <TrackRow
+                  key={item.track.video_id}
+                  videoId={item.track.video_id}
+                  title={item.track.title}
+                  channel={item.track.channel}
+                  artist={item.track.artist}
+                  plays={item.track.play_count}
+                  info={item.info}
+                  index={i}
+                  grid={CO_GRID}
+                  extra={
+                    <>
+                      <span className="text-right text-sm tabular-nums">
+                        {item.cnt}
+                      </span>
+                      <span className="text-muted-foreground text-right text-xs tabular-nums">
+                        {fmtDate(item.last_listen)}
+                      </span>
+                    </>
+                  }
+                />
+              ))}
+            </TrackTable>
+            {coData && coData.items.length > coShown ? (
+              <div className="mt-2 flex justify-center">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCoShown((v) => v + 10)}
+                >
+                  Show more ({coData.items.length - coShown})
+                </Button>
+              </div>
+            ) : (
+              <p className="text-muted-foreground py-1.5 text-center text-xs">
+                showing all {coItems.length} tracks
+              </p>
+            )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {/* What comes next (Markov over sessions) */}
+      {(nextPending || nextItems.length > 0) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>What comes next</CardTitle>
+            <CardDescription className="text-xs">
+              tracks that usually follow this one in your history ·{" "}
+              {nextData?.items.length ?? 0} loaded
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {nextPending ? (
+              <LoadingNote size="sm" />
+            ) : (
+              <>
+            <TrackTable
+              grid={NEXT_GRID}
+                extraHead={
+                  <>
+                    <span
+                      className="text-right"
+                      title="how many times it followed this track"
+                    >
+                      next
+                    </span>
+                    <span
+                      className="text-right"
+                      title="probability that this track is followed by it"
+                    >
+                      P
+                    </span>
+                    <span className="text-right">last together</span>
+                  </>
+                }
+            >
+              {nextItems.map((item, i) => (
+                <TrackRow
+                  key={item.track.video_id}
+                  videoId={item.track.video_id}
+                  title={item.track.title}
+                  channel={item.track.channel}
+                  artist={item.track.artist}
+                  plays={item.track.play_count}
+                  info={item.info}
+                  index={i}
+                  grid={NEXT_GRID}
+                  extra={
+                    <>
+                      <span className="text-right text-sm tabular-nums">
+                        {item.cnt}×
+                      </span>
+                      <span className="text-right text-xs tabular-nums">
+                        {Math.round((item.p ?? 0) * 100)}%
+                      </span>
+                      <span className="text-muted-foreground text-right text-xs tabular-nums">
+                        {fmtDate(item.last_listen)}
+                      </span>
+                    </>
+                  }
+                />
+              ))}
+            </TrackTable>
+            {nextData && nextData.items.length > nextShown ? (
+              <div className="mt-2 flex justify-center">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setNextShown((v) => v + 10)}
+                >
+                  Show more ({nextData.items.length - nextShown})
+                </Button>
+              </div>
+            ) : (
+              <p className="text-muted-foreground py-1.5 text-center text-xs">
+                showing all {nextItems.length} tracks
+              </p>
+            )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {/* Mix-compatible (Camelot wheel + BPM) */}
+      {(mixPending || (mixData?.available && mixData.items.length > 0)) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Mix-compatible</CardTitle>
+            {!mixPending && mixData && (
+              <CardDescription className="text-xs">
+                harmonic mixing · seed {mixData.seed.key} (
+                {mixData.seed.camelot}) · {Math.round(mixData.seed.tempo)} BPM
+                · {mixData.total} total
+              </CardDescription>
+            )}
+          </CardHeader>
+          <CardContent>
+            {mixPending || !mixData ? (
+              <LoadingNote size="sm" />
+            ) : (
+              <>
             <TrackTable
               grid={MIX_GRID}
               extraHead={
@@ -1244,6 +1262,8 @@ export function TrackCard() {
               <p className="text-muted-foreground py-1.5 text-center text-xs">
                 showing all {Math.min(mixShown, mixData.items.length)} tracks
               </p>
+            )}
+              </>
             )}
           </CardContent>
         </Card>

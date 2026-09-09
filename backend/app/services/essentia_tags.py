@@ -37,6 +37,10 @@ from app.config import settings
 
 # silence TensorFlow INFO/WARNING spam about CUDA probing (before TF import)
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+# one inter-op pool: without it TF spawns extra thread pools per session,
+# which multiplies CPU arenas when several model packs are alive
+os.environ.setdefault("TF_NUM_INTEROP_THREADS", "1")
+os.environ.setdefault("TF_INTER_OP_PARALLELISM_THREADS", "1")
 
 import essentia
 
@@ -113,7 +117,16 @@ INSTRUMENT_NAMES = {
     "violin": "Violin", "voice": "Voice",
 }
 
-_local = threading.local()
+# Shared model pack: one copy for the whole process. Essentia's
+# TensorflowPredict instances are not thread-safe, so every inference call
+# must hold _model_lock. A thread-local pack (the previous approach) loaded
+# the full model set into every worker thread — with 8+ workers TF arenas
+# multiplied per thread and memory "leaked" (TF never returns it to the OS).
+_model_lock = threading.Lock()
+# public alias: other modules (essentia_feats) run their TF models under
+# the same lock — one shared TF runtime, one set of arenas
+model_lock = _model_lock
+_algos: dict | None = None
 
 
 def download_model_file(url: str, dest: Path) -> None:
@@ -166,63 +179,67 @@ def _positive_class(classes: list[str]) -> int:
 
 
 def _algorithms() -> dict:
-    """Thread-local instances (inference is not thread-safe)."""
-    if getattr(_local, "algos", None) is not None:
-        return _local.algos
-    try:
-        from essentia.standard import (
-            TensorflowPredict2D,
-            TensorflowPredictEffnetDiscogs,
-        )
-    except ImportError as exc:
-        raise RuntimeError(
-            "essentia-tensorflow is shadowed by the plain essentia wheel "
-            "(happens on a fresh venv); it is repaired automatically by "
-            "dev.sh/start.sh, or run: uv pip install --reinstall-package "
-            "essentia-tensorflow essentia-tensorflow"
-        ) from exc
-
-    ensure_models()
-
-    def head(name: str):
-        meta_path = MODELS_DIR / f"{name}-discogs-effnet-1.json"
-        with open(meta_path) as f:
-            m = json.load(f)
-        alg = TensorflowPredict2D(
-            graphFilename=str(MODELS_DIR / f"{name}-discogs-effnet-1.pb"),
-            input=m["schema"]["inputs"][0]["name"],
-            output=m["schema"]["outputs"][0]["name"],
-        )
-        classes = [str(c) for c in m["classes"]]
-        return alg, classes
-
-    def _head_checked(name: str):
+    """Shared instances (one pack per process, thread-safe via lock)."""
+    global _algos
+    if _algos is not None:
+        return _algos
+    with _model_lock:
+        if _algos is not None:
+            return _algos
         try:
-            return head(name)
-        except Exception as exc:
+            from essentia.standard import (
+                TensorflowPredict2D,
+                TensorflowPredictEffnetDiscogs,
+            )
+        except ImportError as exc:
             raise RuntimeError(
-                f"essentia: head {name} failed to load: "
-                f"{type(exc).__name__}: {exc}"
+                "essentia-tensorflow is shadowed by the plain essentia wheel "
+                "(happens on a fresh venv); it is repaired automatically by "
+                "dev.sh/start.sh, or run: uv pip install --reinstall-package "
+                "essentia-tensorflow essentia-tensorflow"
             ) from exc
 
-    with open(MODELS_DIR / f"{DISCOGS_PB}.json") as f:
-        styles = json.load(f)["classes"]
+        ensure_models()
 
-    algos: dict = {
-        "act": TensorflowPredictEffnetDiscogs(
-            graphFilename=str(MODELS_DIR / f"{DISCOGS_PB}.pb"),
-            output="PartitionedCall",
-        ),
-        "emb": TensorflowPredictEffnetDiscogs(
-            graphFilename=str(MODELS_DIR / f"{DISCOGS_PB}.pb"),
-            output="PartitionedCall:1",
-        ),
-        "styles": styles,
-    }
-    for h in HEADS:
-        algos[h] = _head_checked(h)
-    _local.algos = algos
-    return _local.algos
+        def head(name: str):
+            meta_path = MODELS_DIR / f"{name}-discogs-effnet-1.json"
+            with open(meta_path) as f:
+                m = json.load(f)
+            alg = TensorflowPredict2D(
+                graphFilename=str(MODELS_DIR / f"{name}-discogs-effnet-1.pb"),
+                input=m["schema"]["inputs"][0]["name"],
+                output=m["schema"]["outputs"][0]["name"],
+            )
+            classes = [str(c) for c in m["classes"]]
+            return alg, classes
+
+        def _head_checked(name: str):
+            try:
+                return head(name)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"essentia: head {name} failed to load: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+
+        with open(MODELS_DIR / f"{DISCOGS_PB}.json") as f:
+            styles = json.load(f)["classes"]
+
+        algos: dict = {
+            "act": TensorflowPredictEffnetDiscogs(
+                graphFilename=str(MODELS_DIR / f"{DISCOGS_PB}.pb"),
+                output="PartitionedCall",
+            ),
+            "emb": TensorflowPredictEffnetDiscogs(
+                graphFilename=str(MODELS_DIR / f"{DISCOGS_PB}.pb"),
+                output="PartitionedCall:1",
+            ),
+            "styles": styles,
+        }
+        for h in HEADS:
+            algos[h] = _head_checked(h)
+        _algos = algos
+        return _algos
 
 
 def prettify_style(style: str) -> str:
@@ -239,33 +256,42 @@ def analyze(y16: np.ndarray) -> dict:
     a = _algorithms()
     audio = np.ascontiguousarray(y16, dtype=np.float32)
 
-    emb_raw = np.asarray(a["emb"](audio))  # (frames, 1280)
-    embeddings = emb_raw if emb_raw.ndim == 2 else emb_raw[None, :]
-    pooled = embeddings.mean(axis=0)
-    activations = np.asarray(a["act"](audio)).mean(axis=0)
+    # the models are shared between worker threads: serialize inference
+    with _model_lock:
+        emb_raw = np.asarray(a["emb"](audio))  # (frames, 1280)
+        activations = np.asarray(a["act"](audio)).mean(axis=0)
 
-    def head_prob(name: str) -> tuple[float, dict[str, float]]:
-        alg, classes = a[name]
-        pred = np.asarray(alg(embeddings)).mean(axis=0)
-        scores = {str(c): float(v) for c, v in zip(classes, pred)}
-        return scores[classes[_positive_class(classes)]], scores
+        embeddings = emb_raw if emb_raw.ndim == 2 else emb_raw[None, :]
+        pooled = embeddings.mean(axis=0)
 
-    vocal_alg, vocal_classes = a["voice_instrumental"]
-    v_pred = np.asarray(vocal_alg(embeddings)).mean(axis=0)
-    vocal_scores = {str(c): float(v) for c, v in zip(vocal_classes, v_pred)}
-    vocal_ratio = vocal_scores.get("voice", next(iter(vocal_scores.values())))
+        def head_prob(name: str) -> tuple[float, dict[str, float]]:
+            alg, classes = a[name]
+            pred = np.asarray(alg(embeddings)).mean(axis=0)
+            scores = {str(c): float(v) for c, v in zip(classes, pred)}
+            return scores[classes[_positive_class(classes)]], scores
 
-    inst_alg, inst_classes = a["mtg_jamendo_instrument"]
-    i_pred = np.asarray(inst_alg(embeddings)).mean(axis=0)
-    inst = dict(zip(inst_classes, i_pred))
+        vocal_alg, vocal_classes = a["voice_instrumental"]
+        v_pred = np.asarray(vocal_alg(embeddings)).mean(axis=0)
+        vocal_scores = {
+            str(c): float(v) for c, v in zip(vocal_classes, v_pred)
+        }
+        vocal_ratio = vocal_scores.get(
+            "voice", next(iter(vocal_scores.values()))
+        )
 
-    theme_alg, theme_classes = a["mtg_jamendo_moodtheme"]
-    m_pred = np.asarray(theme_alg(embeddings)).mean(axis=0)
-    theme = {str(c): float(v) for c, v in zip(theme_classes, m_pred)}
+        inst_alg, inst_classes = a["mtg_jamendo_instrument"]
+        i_pred = np.asarray(inst_alg(embeddings)).mean(axis=0)
+        inst = dict(zip(inst_classes, i_pred))
 
-    danceability, _ = head_prob("danceability")
-    acoustic_prob, _ = head_prob("mood_acoustic")
-    bright_scores = head_prob("nsynth_bright_dark")[1]
+        theme_alg, theme_classes = a["mtg_jamendo_moodtheme"]
+        m_pred = np.asarray(theme_alg(embeddings)).mean(axis=0)
+        theme = {str(c): float(v) for c, v in zip(theme_classes, m_pred)}
+
+        danceability, _ = head_prob("danceability")
+        acoustic_prob, _ = head_prob("mood_acoustic")
+        bright_scores = head_prob("nsynth_bright_dark")[1]
+
+        model_moods = {m: head_prob(m)[0] for m in MODEL_MOODS}
 
     genres = [
         {"name": prettify_style(a["styles"][i]), "score": round(float(s), 3)}
@@ -294,7 +320,7 @@ def analyze(y16: np.ndarray) -> dict:
 
     moods: dict[str, float] = {}
     for m in MODEL_MOODS:
-        moods[m] = round(head_prob(m)[0], 3)
+        moods[m] = round(float(model_moods[m]), 3)
     for mood, tags in THEME_MOODS.items():
         vals = [theme.get(t, 0.0) for t in tags if t in theme]
         moods[mood] = round(float(np.mean(vals)) if vals else 0.0, 3)

@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, or_, text, text
 from sqlmodel import Session, select
 
 from app.config import settings
@@ -21,6 +21,7 @@ from app.models import (
     Listen,
     Lyrics,
     Track,
+    TrackError,
 )
 from app.parsers.takeout import load_history_file
 from app.services import jobs as jobs_svc
@@ -32,15 +33,19 @@ from app.services.lyrics import run_lyrics
 from app.services.music_filter import run_filter
 from app.services.musicbrainz import run_mb_genres
 from app.services.recommend import (
-    mb_for_track,
     pair_essentia_match,
     similar_artists,
     similar_tracks_v2,
     similar_tracks_essentia,
 )
 from app.services import stats as stats_svc
+from app.services import errors as errors_svc
 from app.services import musicbrainz as mb_svc
 from app.services import ytmusic as ytm_svc
+from app.services import context as context_svc
+from app.services import listenbrainz as lb_svc
+from app.services import mixing as mixing_svc
+from app.services import sessions as sessions_svc
 
 DIST_DIR = settings.frontend_dist
 
@@ -83,6 +88,33 @@ def _track_payload(t: Track) -> dict:
         "artist": t.artist_canonical or t.channel,
         "play_count": t.play_count,
     }
+
+
+def _feature_info(session: Session, video_id: str) -> dict:
+    """Audio feature summary of a track for recommendation tables."""
+    info: dict = {
+        "cluster": "",
+        "tempo": None,
+        "energy": None,
+        "danceability": None,
+        "acousticness": None,
+        "duration": None,
+    }
+    t = session.get(Track, video_id)
+    if t is None:
+        return info
+    info["duration"] = t.duration
+    if t.cluster_id is not None:
+        c = session.get(Cluster, t.cluster_id)
+        if c is not None:
+            info["cluster"] = c.name
+    f = session.get(AudioFeatures, video_id)
+    if f is not None and f.source == "audio":
+        info["tempo"] = _f(f.tempo, 1)
+        info["energy"] = _f(f.energy)
+        info["danceability"] = _f(f.danceability)
+        info["acousticness"] = _f(f.acousticness)
+    return info
 
 
 def _job_payload(job: Job) -> dict:
@@ -183,6 +215,12 @@ def api_pipeline_mb_genres() -> dict:
     return {"ok": True}
 
 
+@app.post("/api/pipeline/sessions")
+def api_pipeline_sessions() -> dict:
+    _spawn("sessions", sessions_svc.run_sessions)
+    return {"ok": True}
+
+
 def _date_str(v) -> str | None:
     if v is None:
         return None
@@ -209,8 +247,10 @@ def api_tracks(
     hidden: bool = False,
     genre: str = "",
     language: str = "",
+    key: str = "",
     instrumental: bool = False,
     artist: str = "",
+    errors: bool = False,
 ) -> dict:
     import json as _json
 
@@ -248,8 +288,24 @@ def api_tracks(
     if cluster_id is not None:
         conditions.append(Track.cluster_id == cluster_id)
     if genre:
+        # match only the top-3 "genres" array (what the track card shows and
+        # the dashboard counts), not other names inside the tags JSON
         conditions.append(
-            AudioFeatures.tags.like(f'%"{genre}"%')  # type: ignore[union-attr]
+            text(
+                "EXISTS (SELECT 1 FROM json_each("
+                "CASE WHEN json_valid(audio_features.tags) "
+                "THEN audio_features.tags ELSE '[]' END, '$.genres') je "
+                "WHERE json_extract(je.value, '$.name') = :genre_name)"
+            ).bindparams(genre_name=genre)
+        )
+    if key.strip():
+        conditions.append(AudioFeatures.key == key.strip())
+    if errors:
+        conditions.append(
+            text(
+                "EXISTS (SELECT 1 FROM track_error te "
+                "WHERE te.video_id = track.video_id)"
+            )
         )
     if instrumental:
         # whisper transcripts are often false positives: tracks whose only
@@ -363,6 +419,19 @@ def api_tracks(
                     except (ValueError, TypeError, KeyError):
                         pass
             tracks.append(item)
+        # flag rows that currently have a processing error (page-local query)
+        page_ids = [t.video_id for t, *_ in rows]
+        err_ids: set[str] = set()
+        if page_ids:
+            err_ids = set(
+                session.exec(
+                    select(TrackError.video_id).where(  # type: ignore[arg-type]
+                        TrackError.video_id.in_(page_ids)  # type: ignore[union-attr]
+                    )
+                ).all()
+            )
+        for item in tracks:
+            item["has_error"] = item["video_id"] in err_ids
         return {
             "total": total,
             "page": page,
@@ -407,6 +476,7 @@ def api_track_detail(video_id: str) -> dict:
             "has_lyrics": ly is not None and bool(ly.text),
             "genre_scores": [],
             "instrument_scores": [],
+            "errors": errors_svc.track_errors(video_id),
         }
         if f is not None:
             item.update(
@@ -601,6 +671,29 @@ def api_languages() -> list[dict]:
     ]
 
 
+@app.get("/api/errors")
+def api_errors() -> list[dict]:
+    """Current per-track processing errors (audio/lyrics), newest first."""
+    return errors_svc.list_errors()
+
+
+@app.get("/api/keys")
+def api_keys() -> list[dict]:
+    """Musical keys present in analyzed tracks, with counts (tracks filter)."""
+    with Session(engine) as session:
+        rows = session.exec(
+            select(AudioFeatures.key, func.count(AudioFeatures.track_id))
+            .join(Track, Track.video_id == AudioFeatures.track_id)  # type: ignore[call-arg]
+            .where(
+                AudioFeatures.key != "",  # type: ignore[arg-type]
+                Track.is_music == True,  # noqa: E712
+            )
+            .group_by(AudioFeatures.key)
+            .order_by(func.count(AudioFeatures.track_id).desc())
+        ).all()
+    return [{"key": k, "count": n} for k, n in rows if k]
+
+
 @app.get("/api/tracks/{video_id}/lyrics")
 def api_track_lyrics(video_id: str) -> dict:
     with Session(engine) as session:
@@ -638,10 +731,23 @@ def api_dashboard(
     if granularity not in ("month", "week"):
         raise HTTPException(422, "granularity must be month or week")
     with Session(engine) as session:
+        genres, genre_coverage = stats_svc.genre_distribution(session, d_from, d_to)
         return {
             "totals": stats_svc.totals(session, d_from, d_to),
-            "top_artists": stats_svc.top_artists(session, date_from=d_from, date_to=d_to),
-            "top_tracks": stats_svc.top_tracks(session, date_from=d_from, date_to=d_to),
+            "kpi": stats_svc.kpi(session, d_from, d_to),
+            "discoveries": stats_svc.discoveries(session, d_from, d_to),
+            "genre_distribution": genres,
+            "genre_coverage": genre_coverage,
+            "avg_features": stats_svc.avg_features(session, d_from, d_to),
+            "mood_profile": stats_svc.mood_profile(session, d_from, d_to),
+            "by_key": stats_svc.by_key(session, d_from, d_to),
+            "vocal_split": stats_svc.vocal_split(session, d_from, d_to),
+            "language_distribution": stats_svc.language_distribution(
+                session, d_from, d_to
+            ),
+            "mood_trend": stats_svc.mood_trend(
+                session, d_from, d_to, granularity
+            ),
             "by_hour": stats_svc.by_hour(session, d_from, d_to),
             "by_weekday": stats_svc.by_weekday(session, d_from, d_to),
             "timeline": (
@@ -713,6 +819,8 @@ def api_moods() -> dict:
 
 @app.get("/api/recommendations")
 def api_recommendations(track_id: str = "") -> dict:
+    from app.services.artists import normalize_artist
+
     with Session(engine) as session:
         analyzed = session.exec(
             select(AudioFeatures).order_by(AudioFeatures.analyzed_at.desc())
@@ -723,23 +831,46 @@ def api_recommendations(track_id: str = "") -> dict:
             if t is not None:
                 options.append({"track": _track_payload(t)})
         selected = None
-        mb_artists: list[dict] = []
-        mb_error = ""
-        mood_name = ""
         sim_artists: list[dict] | None = None
+        lb_artists: list[dict] = []
+        lb_error = ""
         if track_id:
             t = session.get(Track, track_id)
             if t is not None:
                 selected = _track_payload(t)
             sim_artists = similar_artists(track_id)
-            mb_artists, mb_error, mood_name = mb_for_track(track_id)
+            # global similar artists (ListenBrainz), enriched with the
+            # user's own listening stats; on-demand + cached in lb_similar
+            if t is not None:
+                artist_name = t.artist_canonical or t.channel
+                raw_lb, lb_error = lb_svc.similar_for_name(artist_name)
+                if raw_lb:
+                    canonical_plays: dict[str, int] = {}
+                    rows = session.execute(
+                        text(
+                            "SELECT COALESCE(NULLIF(artist_canonical, ''), channel), "
+                            "SUM(play_count) FROM track WHERE is_music = 1 "
+                            "GROUP BY 1"
+                        )
+                    ).all()
+                    canonical_plays = {r[0]: int(r[1] or 0) for r in rows if r[0]}
+                    known = set(canonical_plays)
+                    for a in raw_lb:
+                        norm = normalize_artist(a["name"])
+                        plays = canonical_plays.get(norm, 0)
+                        lb_artists.append(
+                            {
+                                **a,
+                                "plays": plays,
+                                "in_history": norm in known,
+                            }
+                        )
         return {
             "options": options,
             "selected": selected,
             "similar_artists": sim_artists,
-            "mb_artists": mb_artists,
-            "mb_error": mb_error,
-            "mood_name": mood_name,
+            "lb_artists": lb_artists,
+            "lb_error": lb_error,
         }
 
 
@@ -754,15 +885,17 @@ def api_recommendations_similar(
         return {"similar": [], "total": 0}
     items, total = sim
     result = []
-    for s in items:
-        result.append(
-            {
-                "track": _track_payload(s["track"]),
-                "distance": s["distance"],
-                "tempo": s["tempo"],
-                "match": s["match"],
-            }
-        )
+    with Session(engine) as session:
+        for s in items:
+            result.append(
+                {
+                    "track": _track_payload(s["track"]),
+                    "distance": s["distance"],
+                    "tempo": s["tempo"],
+                    "match": s["match"],
+                    "info": _feature_info(session, s["track"].video_id),
+                }
+            )
     return {"similar": result, "total": total}
 
 
@@ -790,9 +923,11 @@ def api_recommendations_essentia(
                         "channel": t.channel,
                         "artist": t.artist_canonical or t.channel,
                         "is_music": t.is_music,
+                        "play_count": t.play_count,
                     },
                     "distance": s["distance"],
                     "match": s["match"],
+                    "info": _feature_info(session, t.video_id),
                 }
             )
         return {"similar": result, "total": total}
@@ -858,6 +993,62 @@ def api_youtube_similar(video_id: str) -> dict:
                     info["match"] = round(m * 100)
             it["info"] = info
     return {"enabled": True, "similar": items}
+
+
+@app.get("/api/tracks/{video_id}/co-listened")
+def api_co_listened(video_id: str, limit: int = 10) -> dict:
+    """Tracks historically listened in the same sessions (co-occurrence)."""
+    res = sessions_svc.co_listened(video_id, limit=max(1, min(limit, 50)))
+    if res is None:
+        return {"built": False, "items": [], "total": 0}
+    with Session(engine) as session:
+        for it in res["items"]:
+            it["info"] = _feature_info(session, it["track"]["video_id"])
+    return {"built": True, **res}
+
+
+@app.get("/api/tracks/{video_id}/next")
+def api_next_tracks(video_id: str, limit: int = 10) -> dict:
+    """What usually follows this track in the user's history (Markov)."""
+    res = sessions_svc.next_tracks(video_id, limit=max(1, min(limit, 50)))
+    if res is None:
+        return {"built": False, "items": [], "total": 0}
+    with Session(engine) as session:
+        for it in res["items"]:
+            it["info"] = _feature_info(session, it["track"]["video_id"])
+    return {"built": True, **res}
+
+
+@app.get("/api/tracks/{video_id}/mixable")
+def api_mixable(video_id: str, limit: int = 12) -> dict:
+    """Harmonically mix-compatible tracks (Camelot wheel + BPM)."""
+    res = mixing_svc.mixable(video_id, limit=max(1, min(limit, 50)))
+    if res is None:
+        return {"available": False, "items": [], "total": 0}
+    with Session(engine) as session:
+        for it in res["items"]:
+            it["info"] = _feature_info(session, it["track"]["video_id"])
+    return {"available": True, **res}
+
+
+@app.get("/api/recommendations/context")
+def api_recommendations_context(
+    hour: int = -1,
+    weekday: int = -1,
+    limit: int = 12,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict:
+    """Tracks that fit the given (or current) time of day and weekday."""
+    h = hour if 0 <= hour <= 23 else None
+    wd = weekday if 0 <= weekday <= 6 else None
+    d_from = _parse_date(date_from, "date_from")
+    d_to = _parse_date(date_to, "date_to")
+    if d_from and d_to and d_from > d_to:
+        raise HTTPException(422, "date_from must be earlier than date_to")
+    return context_svc.for_now(
+        h, wd, limit=max(1, min(limit, 100)), date_from=d_from, date_to=d_to
+    )
 
 
 

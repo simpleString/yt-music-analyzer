@@ -134,3 +134,41 @@ class MbArtist(SQLModel, table=True):
     # json: {name, disambiguation, country, type, life_span, genres, tags}
     payload: str = "[]"
     fetched_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TrackError(SQLModel, table=True):
+    __tablename__ = "track_error"
+    # last processing error per track and pipeline stage ("audio", "lyrics");
+    # the row is removed as soon as the stage succeeds — only actual
+    # problems are kept here
+    video_id: str = Field(primary_key=True, foreign_key="track.video_id")
+    stage: str = Field(primary_key=True)
+    error: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Cooccur(SQLModel, table=True):
+    __tablename__ = "cooccur"
+    # pair listened within one session; track_a < track_b (video_id order)
+    track_a: str = Field(primary_key=True, foreign_key="track.video_id")
+    track_b: str = Field(primary_key=True, foreign_key="track.video_id")
+    cnt: int = 0
+    last_at: datetime | None = None
+
+
+class NextTrack(SQLModel, table=True):
+    __tablename__ = "next_track"
+    # Markov transition prev -> next within a session (time gap capped)
+    cur: str = Field(primary_key=True, foreign_key="track.video_id")
+    nxt: str = Field(primary_key=True, foreign_key="track.video_id")
+    cnt: int = 0
+    last_at: datetime | None = None
+
+
+class LbSimilar(SQLModel, table=True):
+    __tablename__ = "lb_similar"
+    # ListenBrainz global similar artists, keyed by source artist MBID;
+    # json list of {name, mbid}
+    mbid: str = Field(primary_key=True)
+    payload: str = "[]"
+    fetched_at: datetime = Field(default_factory=datetime.utcnow)

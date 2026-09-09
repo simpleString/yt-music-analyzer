@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Square } from "lucide-react"
 
 import { api, type JobKind, useStateQuery } from "@/lib/api"
+import { ErrorsPanel } from "@/components/ErrorsPanel"
 import { JobsPanel } from "@/components/JobsPanel"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -77,6 +78,7 @@ export function ImportPage() {
       if (kind === "audio") return api.runAudio()
       if (kind === "clusters") return api.runClusters()
       if (kind === "mb-genres") return api.runMbGenres()
+      if (kind === "sessions") return api.runSessions()
       return api.runLyrics()
     },
     onSuccess: invalidate,
@@ -127,6 +129,7 @@ export function ImportPage() {
       { kind: "clusters", label: "Clustering → playlists" },
       { kind: "lyrics", label: "Lyrics" },
       { kind: "mb-genres", label: "Artist genres (MusicBrainz)" },
+      { kind: "sessions", label: "Sessions (co-listened + next)" },
     ]
 
   return (
@@ -186,6 +189,8 @@ export function ImportPage() {
       </Card>
 
       <JobsPanel />
+
+      <ErrorsPanel />
 
       <Card>
         <CardHeader>

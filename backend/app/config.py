@@ -61,6 +61,21 @@ class Settings(BaseSettings):
     ytm_limit: int = 25
     # min interval between YT Music requests (seconds), polite throttling
     ytm_throttle: float = 0.7
+    # listening sessions: a gap above this many minutes starts a new one
+    session_gap_min: int = 45
+    # sessions with more unique tracks than this are treated as 24/7
+    # radio streams: co-occurrence pairs are skipped (quadratic cost)
+    session_max_tracks: int = 200
+    # Markov transitions: consecutive listens with a gap above this are
+    # not counted (user walked away mid-session)
+    markov_gap_min: int = 15
+    # recency decay for co-occurrence scores (score halves every N days)
+    cooccur_half_life_days: int = 180
+    # ListenBrainz Labs (global similar artists, no key): enabled + cache TTL
+    lb_enabled: bool = True
+    lb_cache_days: int = 30
+    # minimum key confidence for harmonic-mixing compatibility
+    mix_key_conf: float = 0.7
 
     @property
     def db_path(self) -> Path:

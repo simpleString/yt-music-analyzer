@@ -20,6 +20,7 @@ export type JobKind =
   | "clusters"
   | "lyrics"
   | "mb-genres"
+  | "sessions"
 export type JobStatus =
   | "pending"
   | "running"
@@ -58,6 +59,12 @@ export interface AppState {
 export interface TagScore {
   name: string
   score: number
+}
+
+export interface TrackErrorItem {
+  stage: string
+  error: string
+  created_at: string
 }
 
 export interface TrackDetail {
@@ -101,6 +108,7 @@ export interface TrackDetail {
   mood_romantic?: number | null
   mood_atmospheric?: number | null
   ytm?: YtmMeta | null
+  errors?: TrackErrorItem[]
 }
 
 export interface TrackListItem {
@@ -142,6 +150,7 @@ export interface TrackListItem {
   mood_acoustic?: number | null
   mood_party?: number | null
   features_source?: string
+  has_error?: boolean
 }
 
 export interface TracksData {
@@ -160,8 +169,20 @@ export interface TracksParams {
   hidden: boolean
   genre: string
   language: string
+  key: string
   instrumental: boolean
   artist?: string
+  errors?: boolean
+}
+
+export interface ProcessingErrorItem {
+  video_id: string
+  title: string
+  channel: string
+  artist: string
+  stage: string
+  error: string
+  created_at: string
 }
 
 export interface ArtistTopTrack {
@@ -221,10 +242,9 @@ export interface LanguageOption {
   count: number
 }
 
-export interface TopArtist {
-  channel: string
-  plays: number
-  tracks: number
+export interface KeyOption {
+  key: string
+  count: number
 }
 
 export interface ArtistListItem {
@@ -236,18 +256,76 @@ export interface ArtistListItem {
   top_video_id?: string
 }
 
-export interface TopTrack {
+export interface KpiValue {
+  value: number
+  prev: number | null
+}
+
+export interface DashboardKpi {
+  listens: KpiValue
+  hours: KpiValue
+  artists: KpiValue
+  tracks: KpiValue
+}
+
+export interface NewArtist {
+  name: string
+  plays: number
+}
+
+export interface NewTrack {
   video_id: string
   title: string
   channel: string
-  artist?: string
+  artist: string
   plays: number
+}
+
+export interface Discoveries {
+  new_artists_total: number
+  top_new_artists: NewArtist[]
+  new_tracks_total: number
+  top_new_tracks: NewTrack[]
+}
+
+export interface GenreCount {
+  name: string
+  listens: number
+}
+
+export interface AvgFeatures {
+  tempo: number | null
+  energy: number | null
+  danceability: number | null
+  acousticness: number | null
+  brightness: number | null
+  coverage: number
+}
+
+export interface MoodPoint {
+  energy: number
+  sentiment: number | null
+  listens: number
+}
+
+export interface VocalSplit {
+  vocal: number
+  instrumental: number
+  coverage: number
 }
 
 export interface DashboardData {
   totals: Totals
-  top_artists: TopArtist[]
-  top_tracks: TopTrack[]
+  kpi: DashboardKpi
+  discoveries: Discoveries
+  genre_distribution: GenreCount[]
+  genre_coverage: number
+  avg_features: AvgFeatures
+  mood_profile: Record<string, number>
+  by_key: [string, number][]
+  vocal_split: VocalSplit
+  language_distribution: [string, number][]
+  mood_trend: [string, MoodPoint][]
   by_hour: [string, number][]
   by_weekday: [string, number][]
   timeline: [string, number][]
@@ -273,17 +351,21 @@ export interface TrackInfo {
   play_count: number
 }
 
-export interface MbArtist {
-  name: string
-  country: string
-  tags: string
-}
-
 export interface SimilarTrack {
   track: TrackInfo
   tempo: number
   distance: number
   match: string
+  info?: TrackExtraInfo | null
+}
+
+export interface TrackExtraInfo {
+  cluster: string
+  tempo: number | null
+  energy: number | null
+  danceability: number | null
+  acousticness: number | null
+  duration: number | null
 }
 
 export interface SimilarArtist {
@@ -292,15 +374,73 @@ export interface SimilarArtist {
   tracks_analyzed: number
   tracks_total: number
   plays: number
+  top_video_id?: string
+}
+
+export interface LbArtist {
+  name: string
+  mbid: string
+  comment: string
+  type: string
+  score: number
+  plays: number
+  in_history: boolean
 }
 
 export interface RecommendationsData {
   options: { track: TrackInfo }[]
   selected: TrackInfo | null
   similar_artists: SimilarArtist[] | null
-  mb_artists: MbArtist[]
-  mb_error: string
-  mood_name: string
+  lb_artists: LbArtist[]
+  lb_error: string
+}
+
+export interface HistoryPairItem {
+  track: TrackInfo
+  cnt: number
+  last_listen: string | null
+  score: number
+  p?: number
+  info?: TrackExtraInfo | null
+}
+
+export interface HistoryRecsData {
+  built: boolean
+  items: HistoryPairItem[]
+  total: number
+}
+
+export interface MixableItem {
+  track: TrackInfo
+  key: string
+  camelot: string
+  tempo: number
+  tempo_delta: number
+  relation: "same" | "relative" | "energy-up" | "energy-down"
+  info?: TrackExtraInfo | null
+}
+
+export interface MixableData {
+  available: boolean
+  seed: { key: string; camelot: string; tempo: number }
+  items: MixableItem[]
+  total: number
+}
+
+export interface ContextItem {
+  track: TrackInfo
+  plays: number
+  at_hour: number
+  at_weekday: number
+  score: number
+  reason: string
+}
+
+export interface ContextData {
+  hour: number
+  weekday: number
+  total: number
+  items: ContextItem[]
 }
 
 export interface EssentiaRecommendationsData {
@@ -317,6 +457,7 @@ export interface EssentiaSimilarTrack {
   track: TrackInfo
   distance: number
   match: string
+  info?: TrackExtraInfo | null
 }
 
 export interface YtmMeta {
@@ -426,8 +567,10 @@ export const api = {
     hidden,
     genre,
     language,
+    key,
     instrumental,
     artist,
+    errors: errorsOnly,
   }: TracksParams) => {
     const sp = new URLSearchParams({
       q,
@@ -440,8 +583,10 @@ export const api = {
     if (hidden) sp.set("hidden", "true")
     if (genre) sp.set("genre", genre)
     if (language) sp.set("language", language)
+    if (key) sp.set("key", key)
     if (instrumental) sp.set("instrumental", "true")
     if (artist) sp.set("artist", artist)
+    if (errorsOnly) sp.set("errors", "true")
     return getJson<TracksData>(`/api/tracks?${sp}`)
   },
   artist: (name: string) =>
@@ -450,6 +595,8 @@ export const api = {
   clusters: () => getJson<ClusterOption[]>("/api/clusters"),
   genres: () => getJson<GenreOption[]>("/api/genres"),
   languages: () => getJson<LanguageOption[]>("/api/languages"),
+  keys: () => getJson<KeyOption[]>("/api/keys"),
+  errors: () => getJson<ProcessingErrorItem[]>("/api/errors"),
   classifyTrack: (videoId: string, isMusic: boolean) =>
     postJson("/api/tracks/" + encodeURIComponent(videoId) + "/classify", {
       is_music: isMusic,
@@ -478,6 +625,29 @@ export const api = {
     getJson<YtmSimilarData>(
       `/api/tracks/${encodeURIComponent(videoId)}/youtube-similar`
     ),
+  coListened: (videoId: string, limit = 10) =>
+    getJson<HistoryRecsData>(
+      `/api/tracks/${encodeURIComponent(videoId)}/co-listened?limit=${limit}`
+    ),
+  nextTracks: (videoId: string, limit = 10) =>
+    getJson<HistoryRecsData>(
+      `/api/tracks/${encodeURIComponent(videoId)}/next?limit=${limit}`
+    ),
+  mixable: (videoId: string, limit = 12) =>
+    getJson<MixableData>(
+      `/api/tracks/${encodeURIComponent(videoId)}/mixable?limit=${limit}`
+    ),
+  contextRecs: (limit = 12, from?: string | null, to?: string | null) => {
+    const now = new Date()
+    const sp = new URLSearchParams({
+      hour: String(now.getHours()),
+      weekday: String((now.getDay() + 6) % 7),
+      limit: String(limit),
+    })
+    if (from) sp.set("date_from", from)
+    if (to) sp.set("date_to", to)
+    return getJson<ContextData>(`/api/recommendations/context?${sp}`)
+  },
   importFile: (file: File) => {
     const form = new FormData()
     form.append("file", file)
@@ -491,6 +661,7 @@ export const api = {
   runClusters: () => postForm("/api/pipeline/clusters", new FormData()),
   runLyrics: () => postForm("/api/pipeline/lyrics", new FormData()),
   runMbGenres: () => postForm("/api/pipeline/mb-genres", new FormData()),
+  runSessions: () => postForm("/api/pipeline/sessions", new FormData()),
   cancelJob: (kind: string) =>
     postJson(`/api/jobs/${encodeURIComponent(kind)}/cancel`, {}),
   trackDetail: (videoId: string) =>

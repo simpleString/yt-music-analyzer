@@ -8,3 +8,9 @@ export function cn(...inputs: ClassValue[]) {
 export function artistPath(name: string): string {
   return `/artist/${encodeURIComponent(name)}`
 }
+
+export function tracksPath(params: Record<string, string>): string {
+  const sp = new URLSearchParams(params)
+  const qs = sp.toString()
+  return qs ? `/?${qs}` : "/"
+}

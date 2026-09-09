@@ -19,6 +19,7 @@ const KIND_LABELS: Record<Job["kind"], string> = {
   clusters: "Clustering",
   lyrics: "Lyrics",
   "mb-genres": "Artist genres",
+  sessions: "Listening sessions",
 }
 
 const STATUS_LABELS: Record<JobStatus, string> = {

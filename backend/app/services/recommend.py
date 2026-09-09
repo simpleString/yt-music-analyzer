@@ -1,35 +1,14 @@
 import base64
 import json
 import math
-import time
 
-import httpx
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import StandardScaler
 from sqlmodel import Session, select
 
-from app.config import settings
 from app.db import engine
-from app.models import AudioFeatures, Cluster, Lyrics, Track
-from app.services.musicbrainz import _throttle
-
-MB_API = "https://musicbrainz.org/ws/2"
-
-MOOD_TAGS = {
-    "Happy": ["pop", "dance"],
-    "Energetic": ["electronic", "dance"],
-    "Calm": ["ambient", "chillout"],
-    "Melancholic": ["indie", "post-rock"],
-    "Epic": ["orchestral", "post-rock"],
-    "Dark": ["gothic", "industrial"],
-    "Romantic": ["acoustic", "chanson"],
-    "Atmospheric": ["ambient", "downtempo"],
-}
-
-_last_call = 0.0
-_cache: dict[str, tuple[float, list[dict]]] = {}
-CACHE_TTL = 86400.0
+from app.models import AudioFeatures, Lyrics, Track
 
 
 MOOD_COLS = [
@@ -569,7 +548,13 @@ def similar_tracks_v2(
 
 
 def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
-    """Nearest artists from history by their feature centroids."""
+    """Nearest artists from history by their feature centroids.
+
+    v2: acoustic blocks (timbre/rhythm/harmony/macro) plus the neural
+    Discogs-EffNet embedding, Essentia genre/instrument/moodtag centroid
+    vectors and the 11 mood columns. A group contributes only when both
+    artists have data; the total is normalized by the weight sum.
+    """
     with Session(engine) as session:
         features = session.exec(
             select(AudioFeatures).where(AudioFeatures.source == "audio")
@@ -577,13 +562,30 @@ def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
         groups, usable = _v2_matrix(session, features)
         if len(usable) < MIN_V2_TRACKS or track_id not in groups["timbre"]:
             return None
+        ids = [f.track_id for f in usable]
+        genres, instruments, _, _, moodtags = _load_semantic(session, ids)
+        embedding_map = {
+            f.track_id: _parse_embedding(f.embedding) for f in usable
+        }
+        moods_map = {
+            f.track_id: np.array(
+                [float(getattr(f, c)) for c in MOOD_COLS], dtype=float
+            )
+            for f in usable
+        }
 
         weights = {
-            "timbre": W_TIMBRE,
-            "rhythm": W_RHYTHM,
-            "harmony": W_HARMONY,
-            "macro": W_MACRO,
+            "timbre": 0.12,
+            "rhythm": 0.12,
+            "harmony": 0.12,
+            "macro": 0.08,
+            "embedding": 0.24,
+            "genre": 0.12,
+            "instruments": 0.08,
+            "moods": 0.12,
         }
+        l2_groups = ("timbre", "rhythm", "harmony", "macro")
+
         by_artist: dict[str, list[str]] = {}
         for f in usable:
             row = session.get(Track, f.track_id)
@@ -594,10 +596,70 @@ def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
         if len(by_artist) < 2:
             return None
 
-        def artist_vec(ids: list[str]) -> np.ndarray:
-            return np.mean(
-                [np.concatenate([groups[g][i] for g in weights]) for i in ids], axis=0
+        def _mean_dicts(vecs: list[dict[str, float]]) -> dict[str, float]:
+            out: dict[str, float] = {}
+            for v in vecs:
+                for key, val in v.items():
+                    out[key] = out.get(key, 0.0) + val
+            n = len(vecs) or 1
+            return {key: val / n for key, val in out.items()}
+
+        def artist_data(name: str) -> dict:
+            tids = by_artist[name]
+            data: dict = {
+                g: np.mean([groups[g][i] for i in tids], axis=0)
+                for g in l2_groups
+            }
+            embs = [embedding_map[i] for i in tids if embedding_map.get(i) is not None]
+            data["embedding"] = np.mean(embs, axis=0) if embs else None
+            data["genre"] = _mean_dicts(
+                [genres[i] for i in tids if i in genres]
             )
+            data["instruments"] = _mean_dicts(
+                [instruments[i] for i in tids if i in instruments]
+            )
+            data["moodtags"] = _mean_dicts(
+                [moodtags[i] for i in tids if i in moodtags]  # type: ignore[arg-type]
+            )
+            data["mood_v"] = np.mean(
+                [moods_map[i] for i in tids if i in moods_map], axis=0
+            )
+            return data
+
+        artist_rows = {name: artist_data(name) for name in by_artist}
+
+        def artist_distance(a: dict, b: dict) -> tuple[float | None, str]:
+            """(total score, closest group); None — no shared groups."""
+            per_group: dict[str, float] = {}
+            for g in l2_groups:
+                dim = GROUP_DIMS[g]
+                per_group[g] = float(
+                    np.linalg.norm(a[g] - b[g])
+                ) / math.sqrt(dim)
+            if a["embedding"] is not None and b["embedding"] is not None:
+                d = _vec_cosine_dist(a["embedding"], b["embedding"])
+                if d is not None:
+                    per_group["embedding"] = d
+            for g, key in (("genre", "genre"), ("instruments", "instruments")):
+                d = _cosine_dist(a[key], b[key])
+                if d is not None:
+                    per_group[g] = d
+            mood_ds = [
+                d
+                for d in (
+                    _vec_cosine_dist(a["mood_v"], b["mood_v"]),
+                    _cosine_dist(a["moodtags"], b["moodtags"]),
+                )
+                if d is not None
+            ]
+            if mood_ds:
+                per_group["moods"] = float(np.mean(mood_ds))
+            if not per_group:
+                return None, ""
+            w_sum = sum(weights[g] for g in per_group)
+            total = sum(weights[g] * per_group[g] for g in per_group) / w_sum
+            closest = min(per_group, key=lambda g: per_group[g])
+            return total, closest
 
         selected = session.get(Track, track_id)
         if selected is None:
@@ -605,14 +667,15 @@ def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
         sel_name = selected.artist_canonical or selected.channel
         if sel_name not in by_artist:
             return None
-        sel_vec = artist_vec(by_artist[sel_name])
+        sel = artist_rows[sel_name]
 
         scored: list[tuple[float, str]] = []
-        for name, ids in by_artist.items():
+        for name, data in artist_rows.items():
             if name == sel_name:
                 continue
-            vec = artist_vec(ids)
-            dist = float(np.linalg.norm(sel_vec - vec))
+            dist, _ = artist_distance(sel, data)
+            if dist is None:
+                continue
             scored.append((dist, name))
         scored.sort(key=lambda x: x[0])
 
@@ -626,6 +689,8 @@ def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
                 )
             ).all()
             plays = sum(t.play_count for t in tracks)
+            # representative video (most played) — used as the artist icon
+            top = max(tracks, key=lambda t: t.play_count, default=None)
             result.append(
                 {
                     "channel": name,
@@ -633,70 +698,7 @@ def similar_artists(track_id: str, k: int = 5) -> list[dict] | None:
                     "tracks_analyzed": len(by_artist[name]),
                     "tracks_total": len(tracks),
                     "plays": plays,
+                    "top_video_id": top.video_id if top else "",
                 }
             )
         return result
-
-
-def mb_artists_for_tags(tags: list[str], per_tag: int = 8) -> tuple[list[dict], str]:
-    if not settings.mb_enabled:
-        return [], "MusicBrainz disabled in settings (MB_ENABLED=false)"
-    artists: list[dict] = []
-    now = time.monotonic()
-    for tag in tags:
-        cached = _cache.get(tag)
-        if cached and now - cached[0] < CACHE_TTL:
-            artists.extend(cached[1])
-            continue
-        _throttle()
-        try:
-            resp = httpx.get(
-                MB_API,
-                params={
-                    "query": f"tag:{tag}",
-                    "fmt": "json",
-                    "limit": per_tag,
-                    "sort": "score-desc",
-                },
-                headers={"User-Agent": settings.mb_user_agent},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            payload = resp.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            return artists, f"MusicBrainz unavailable: {type(exc).__name__}"
-        items = []
-        for a in payload.get("artists", []):
-            name = a.get("name", "")
-            if not name:
-                continue
-            country = a.get("country") or ""
-            tags_list = [
-                t.get("name", "") for t in (a.get("tags") or [])[:3]
-            ]
-            items.append(
-                {"name": name, "country": country, "tags": ", ".join(filter(None, tags_list))}
-            )
-        _cache[tag] = (time.monotonic(), items)
-        artists.extend(items)
-    seen: set[str] = set()
-    unique = []
-    for a in artists:
-        if a["name"] in seen:
-            continue
-        seen.add(a["name"])
-        unique.append(a)
-    return unique[:16], ""
-
-
-def mb_for_track(track_id: str) -> tuple[list[dict], str, str]:
-    with Session(engine) as session:
-        t = session.get(Track, track_id)
-        mood_name = ""
-        if t is not None and t.cluster_id is not None:
-            cluster = session.get(Cluster, t.cluster_id)
-            if cluster is not None:
-                mood_name = cluster.name.split(" ·")[0]
-    tags = MOOD_TAGS.get(mood_name, ["indie"])
-    artists, error = mb_artists_for_tags(tags)
-    return artists, error, mood_name

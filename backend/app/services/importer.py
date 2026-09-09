@@ -107,6 +107,10 @@ def run_import(
                 f"in DB: {n_tracks} tracks, {n_listens} listens"
             ),
         )
+        # fresh listens change sessions: rebuild co-occurrence + Markov
+        from app.services import sessions
+
+        sessions.rebuild_in_background()
     except Exception as exc:  # noqa: BLE001
         jobs.fail_job("import", f"{type(exc).__name__}: {exc}")
         raise

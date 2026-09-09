@@ -22,6 +22,7 @@ from app.config import settings
 from app.db import engine
 from app.models import AppMeta, AudioFeatures, Track
 from app.services import jobs
+from app.services import errors as errors_svc
 from app.services import essentia_feats, essentia_tags
 from app.services.clustering import MOOD_COLS
 
@@ -210,7 +211,17 @@ def reset_unavailable() -> int:
 
 def _classify_dl_error(err: str) -> str:
     low = err.lower()
-    if "video unavailable" in low or "this video is not available" in low:
+    dead_markers = (
+        "video unavailable",
+        "this video is not available",
+        "private video",
+        "is private",
+        "removed by the uploader",
+        "has been removed",
+        "available in your country",
+        "has been terminated",
+    )
+    if any(m in low for m in dead_markers):
         return "dead"
     if "sign in to confirm" in low or "not a bot" in low:
         return "bot"
@@ -399,6 +410,8 @@ def analyze_audio(path: Path) -> dict:
     ek = essentia_feats.extract_rhythm_key(audio44, y16)
     del audio44
     tempo = _resolve_tempo(ek, onset_env, sr)
+    # onset envelope is only needed for the tempo resolution
+    del onset_env
     key, mode_conf = ek["key"], ek["strength"]
     loudness = ek["loudness"]
     # energy from the dB scale: -45 dB → 0, 0 dB → 1 (no clipping at the top)
@@ -411,6 +424,7 @@ def analyze_audio(path: Path) -> dict:
     mfcc_vec = np.concatenate([mfcc.mean(axis=1), mfcc.std(axis=1)])
     chroma_vec = chroma.mean(axis=1)
     contrast_vec = contrast.mean(axis=1)
+    del mfcc, chroma, contrast
 
     mid = len(y) // 2
     half = int(HPSS_WINDOW * sr / 2)
@@ -421,6 +435,10 @@ def analyze_audio(path: Path) -> dict:
     p_e = float(np.sqrt((y_perc * y_perc).mean()))
     h_e = float(np.sqrt((y_harm * y_harm).mean()))
     percussive = float(p_e / (p_e + h_e + 1e-9))
+    # free the raw waveform before the model stage: the TF inference is
+    # serialized (shared models), so anything alive here overlaps with
+    # other workers' buffers — keep the per-worker peak small
+    del y, y_win, y_harm, y_perc
 
     # Essentia (Discogs-EffNet + heads): genres, styles, instruments,
     # moods, vocals, danceability/acousticness/brightness (models),
@@ -755,6 +773,7 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
                             consecutive_net = 0
                             consecutive_bot = 0
                             _save_features(vid, feats)
+                            errors_svc.clear_error(vid, "audio")
                             ok += 1
                             note = (
                                 f"{ok} done, {failed} errors; last: "
@@ -777,6 +796,7 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
                         elif status == "dl-error":
                             failed += 1
                             last_error = err
+                            errors_svc.log_error(vid, "audio", err)
                             kind = _classify_dl_error(err)
                             note = None
                             if kind == "dead":
@@ -815,6 +835,9 @@ def run_audio_analysis(stop: threading.Event | None = None) -> None:
                         else:
                             failed += 1
                             last_error = err or "analysis error"
+                            errors_svc.log_error(
+                                vid, "audio", err or "analysis error"
+                            )
                             note = (
                                 f"{ok} done, {failed} errors; last: "
                                 f"analysis error {title[:40]} — {err[:60]}"
@@ -927,6 +950,15 @@ def analyze_track_now(video_id: str) -> tuple[bool, str]:
     if not _single_lock.acquire(blocking=False):
         return False, "another manual analysis is already running"
     try:
+        # a known unavailable video: do not even try to download it
+        if _is_unavailable(_load_unavailable(), video_id):
+            detail = (
+                "marked unavailable — retry is skipped "
+                f"(auto-retry in {UNAVAILABLE_TTL} days, or use "
+                "\"Retry failed audio\" to force it)"
+            )
+            _set_one_status(video_id, "error", detail)
+            return False, detail
         _set_one_status(video_id, "running")
         try:
             ensure_pot_server()
@@ -941,10 +973,12 @@ def analyze_track_now(video_id: str) -> tuple[bool, str]:
             )
         except Exception as exc:  # noqa: BLE001
             detail = f"{type(exc).__name__}: {exc}"
+            errors_svc.log_error(video_id, "audio", detail)
             _set_one_status(video_id, "error", detail[:300])
             return False, detail
         if status == "ok":
             _save_features(video_id, feats)
+            errors_svc.clear_error(video_id, "audio")
             # prefetch YouTube Music data (album/year/thumbnail + native
             # "radio" similar) so the track card is complete right after
             # the analysis, without a manual visit
@@ -966,6 +1000,7 @@ def analyze_track_now(video_id: str) -> tuple[bool, str]:
             unav = _load_unavailable()
             unav[video_id] = date.today().isoformat()
             _save_unavailable(unav)
+        errors_svc.log_error(video_id, "audio", detail)
         _set_one_status(video_id, "error", detail[:300])
         return False, detail
     finally:

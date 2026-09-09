@@ -11,13 +11,12 @@ import {
   Link,
   useLocation,
   useNavigationType,
-  useNavigate,
   useSearchParams,
 } from "react-router-dom";
 import { Ban, Check, EyeOff } from "lucide-react";
 
 import { api, type TrackSort } from "@/lib/api";
-import { techTooltip } from "@/lib/track";
+import { techTooltip, languageLabel } from "@/lib/track";
 import { cn, artistPath } from "@/lib/utils";
 import { LoadingNote } from "@/components/LoadingNote";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -42,65 +41,7 @@ function formatDuration(seconds: number | null): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-const LANG_LABELS: Record<string, string> = {
-  ru: "Russian",
-  en: "English",
-  ja: "Japanese",
-  zh: "Chinese",
-  ko: "Korean",
-  de: "German",
-  fr: "French",
-  es: "Spanish",
-  it: "Italian",
-  pt: "Portuguese",
-  nl: "Dutch",
-  sv: "Swedish",
-  no: "Norwegian",
-  da: "Danish",
-  fi: "Finnish",
-  pl: "Polish",
-  cs: "Czech",
-  sk: "Slovak",
-  sl: "Slovenian",
-  hr: "Croatian",
-  mk: "Macedonian",
-  bg: "Bulgarian",
-  ro: "Romanian",
-  hu: "Hungarian",
-  el: "Greek",
-  tr: "Turkish",
-  uk: "Ukrainian",
-  lt: "Lithuanian",
-  lv: "Latvian",
-  et: "Estonian",
-  sq: "Albanian",
-  he: "Hebrew",
-  ar: "Arabic",
-  fa: "Persian",
-  ur: "Urdu",
-  hi: "Hindi",
-  bn: "Bengali",
-  pa: "Punjabi",
-  gu: "Gujarati",
-  mr: "Marathi",
-  kn: "Kannada",
-  ml: "Malayalam",
-  ta: "Tamil",
-  te: "Telugu",
-  ne: "Nepali",
-  th: "Thai",
-  vi: "Vietnamese",
-  id: "Indonesian",
-  tl: "Tagalog",
-  sw: "Swahili",
-  so: "Somali",
-  af: "Afrikaans",
-  cy: "Welsh",
-  ca: "Catalan",
-  cjk: "Japanese/Chinese (legacy)",
-};
-
-const langLabel = (code: string) => LANG_LABELS[code] ?? code;
+const langLabel = languageLabel;
 
 const SORT_COLUMNS: { key: TrackSort; label: string; align?: "right" }[] = [
   { key: "tempo", label: "BPM", align: "right" },
@@ -114,7 +55,6 @@ const SORT_COLUMNS: { key: TrackSort; label: string; align?: "right" }[] = [
 ];
 
 export function Tracks() {
-  const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -142,7 +82,9 @@ export function Tracks() {
   const hidden = searchParams.get("hidden") === "1";
   const genre = searchParams.get("genre") ?? "";
   const language = searchParams.get("language") ?? "";
+  const key = searchParams.get("key") ?? "";
   const instrumental = searchParams.get("instrumental") === "1";
+  const errorsOnly = searchParams.get("errors") === "1";
   const targetPage = Math.max(1, Number(searchParams.get("page")) || 1);
   const [showFilters, setShowFilters] = useState(false);
 
@@ -170,7 +112,9 @@ export function Tracks() {
       hidden: null,
       genre: null,
       language: null,
+      key: null,
       instrumental: null,
+      errors: null,
       page: null,
     });
   };
@@ -187,6 +131,11 @@ export function Tracks() {
   const { data: languages } = useQuery({
     queryKey: ["languages"],
     queryFn: api.languages,
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: keys } = useQuery({
+    queryKey: ["keys"],
+    queryFn: api.keys,
     staleTime: 5 * 60 * 1000,
   });
   const genreLabel = (name: string): string =>
@@ -209,7 +158,9 @@ export function Tracks() {
       hidden,
       genre,
       language,
+      key,
       instrumental,
+      errorsOnly,
     ],
     queryFn: ({ pageParam }) =>
       api.tracks({
@@ -221,7 +172,9 @@ export function Tracks() {
         hidden,
         genre,
         language,
+        key,
         instrumental,
+        errors: errorsOnly,
       }),
     initialPageParam: 1,
     getNextPageParam: (last) => {
@@ -439,6 +392,20 @@ export function Tracks() {
                 />
                 Instrumental
               </label>
+              <label className="flex cursor-pointer select-none items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={errorsOnly}
+                  onChange={(e) =>
+                    setParams({
+                      errors: e.target.checked ? "1" : null,
+                      page: null,
+                    })
+                  }
+                  title="Only tracks with processing errors (audio/lyrics)"
+                />
+                With errors
+              </label>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-1.5">
               <Select
@@ -491,6 +458,24 @@ export function Tracks() {
                   {(languages ?? []).map((l) => (
                     <SelectItem key={l.code || "unknown"} value={l.code}>
                       {langLabel(l.code)} ({l.count})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={key || "any"}
+                onValueChange={(v) =>
+                  setParams({ key: v === "any" ? null : v, page: null })
+                }
+              >
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Any key" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="any">Any key</SelectItem>
+                  {(keys ?? []).map((k) => (
+                    <SelectItem key={k.key} value={k.key}>
+                      {k.key} ({k.count})
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -592,8 +577,9 @@ export function Tracks() {
               {virtualizer.getVirtualItems().map((vi) => {
                 const t = rows[vi.index];
                 return (
-                  <div
+                  <Link
                     key={t.video_id}
+                    to={`/track/${t.video_id}`}
                     data-index={vi.index}
                     ref={virtualizer.measureElement}
                     style={{
@@ -605,18 +591,12 @@ export function Tracks() {
                     }}
                     className={cn(
                       GRID,
-                      "h-12 hover:bg-[#ffffcc] cursor-pointer border-b border-[#e0e0e0]",
+                      "text-inherit no-underline hover:text-inherit visited:text-inherit h-12 hover:bg-[#ffffcc] border-b border-[#e0e0e0]",
                     )}
                     title={techTooltip(t)}
-                    onClick={(e) => {
-                      if (
-                        e.target instanceof HTMLElement &&
-                        (e.target.closest("a") || e.target.closest("button"))
-                      )
-                        return;
-                      sessionStorage.setItem("tracks-open-track", t.video_id);
-                      navigate(`/track/${t.video_id}`);
-                    }}
+                    onClick={() =>
+                      sessionStorage.setItem("tracks-open-track", t.video_id)
+                    }
                   >
                     <span className="text-muted-foreground tabular-nums">
                       {vi.index + 1}
@@ -626,6 +606,7 @@ export function Tracks() {
                       target="_blank"
                       rel="noopener noreferrer"
                       className="shrink-0"
+                      onClick={(e) => e.stopPropagation()}
                     >
                       <img
                         src={`https://i.ytimg.com/vi/${t.video_id}/mqdefault.jpg`}
@@ -641,6 +622,7 @@ export function Tracks() {
                         rel="noopener noreferrer"
                         className="block truncate text-sm hover:underline max-w-fit"
                         title={t.title}
+                        onClick={(e) => e.stopPropagation()}
                       >
                         {t.title}
                       </a>
@@ -652,6 +634,15 @@ export function Tracks() {
                       </Link>
                     </span>
                     <span className="flex min-w-0 flex-col items-start gap-0.5 overflow-hidden">
+                      {t.has_error && (
+                        <Badge
+                          variant="destructive"
+                          className="max-w-full font-normal"
+                          title="processing error — see the track card"
+                        >
+                          <span className="truncate">error</span>
+                        </Badge>
+                      )}
                       {t.cluster_name ? (
                         <Badge variant="outline" className="max-w-full">
                           <span className="truncate">{t.cluster_name}</span>
@@ -711,12 +702,13 @@ export function Tracks() {
                           className="size-7"
                           title="Restore to library (this is music)"
                           disabled={classify.isPending}
-                          onClick={() =>
+                          onClick={(e) => {
+                            e.stopPropagation();
                             classify.mutate({
                               videoId: t.video_id,
                               isMusic: true,
-                            })
-                          }
+                            });
+                          }}
                         >
                           <Check className="size-4" />
                         </Button>
@@ -728,12 +720,13 @@ export function Tracks() {
                             className="hover:text-[#cc0000] size-7"
                             title="This is not music"
                             disabled={classify.isPending}
-                            onClick={() =>
+                            onClick={(e) => {
+                              e.stopPropagation();
                               classify.mutate({
                                 videoId: t.video_id,
                                 isMusic: false,
-                              })
-                            }
+                              });
+                            }}
                           >
                             <Ban className="size-4" />
                           </Button>
@@ -743,14 +736,17 @@ export function Tracks() {
                             className="hover:text-[#cc0000] size-7"
                             title={`Hide entire channel "${t.channel}"`}
                             disabled={hideChannel.isPending}
-                            onClick={() => hideChannel.mutate(t.channel)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              hideChannel.mutate(t.channel);
+                            }}
                           >
                             <EyeOff className="size-4" />
                           </Button>
                         </>
                       )}
                     </span>
-                  </div>
+                  </Link>
                 );
               })}
             </div>

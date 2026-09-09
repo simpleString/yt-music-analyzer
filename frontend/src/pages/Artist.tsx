@@ -13,10 +13,7 @@ import { LoadingNote } from "@/components/LoadingNote";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 
 const GRID =
   "grid grid-cols-[2.25rem_4.25rem_minmax(0,1fr)_10.5rem_4rem_4.5rem_4.5rem_4.5rem_4.5rem_6rem_6rem_4.5rem] items-center gap-1.5 px-1.5";
@@ -90,6 +87,7 @@ export function ArtistPage() {
         hidden: false,
         genre: "",
         language: "",
+        key: "",
         instrumental: false,
         artist,
       }),
@@ -202,10 +200,12 @@ export function ArtistPage() {
             </div>
             <div className="grid grid-cols-2 items-center gap-1">
               <div className="flex min-w-0 flex-wrap gap-1 items-center">
-                <Link
-                  to={`/track/${s.top_track.video_id}`}
+                <a
+                  href={`https://www.youtube.com/watch?v=${s.top_track.video_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="min-w-0"
-                  title={`Top track: ${s.top_track.title}`}
+                  title={`Top track: ${s.top_track.title} (YouTube)`}
                 >
                   <Badge
                     variant="outline"
@@ -213,7 +213,7 @@ export function ArtistPage() {
                   >
                     ▶ {s.top_track.title} ({s.top_track.plays})
                   </Badge>
-                </Link>
+                </a>
               </div>
               <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-sm">
                 <div className="flex flex-col sm:border-l sm:border-[#e0e0e0] sm:pl-4">
@@ -250,16 +250,16 @@ export function ArtistPage() {
                   </Badge>
                 )}
                 {mb?.mbid && (
-                  <a
-                    href={`https://musicbrainz.org/artist/${mb.mbid}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="MusicBrainz page"
-                  >
-                    <Badge variant="outline" className="font-normal">
+                  <Badge variant="outline" className="font-normal" asChild>
+                    <a
+                      href={`https://musicbrainz.org/artist/${mb.mbid}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="MusicBrainz page"
+                    >
                       MB ↗
-                    </Badge>
-                  </a>
+                    </a>
+                  </Badge>
                 )}
               </div>
             )}
@@ -319,21 +319,14 @@ export function ArtistPage() {
 
             <div className="min-w-[74.5rem]">
               {rows.map((t: TrackListItem, i) => (
-                <div
+                <Link
                   key={t.video_id}
+                  to={`/track/${t.video_id}`}
                   className={cn(
                     GRID,
-                    "hover:bg-[#ffffcc] cursor-pointer border-b border-[#e0e0e0]",
+                    "text-inherit no-underline hover:text-inherit visited:text-inherit h-12 overflow-hidden hover:bg-[#ffffcc] border-b border-[#e0e0e0]",
                   )}
                   title={techTooltip(t)}
-                  onClick={(e) => {
-                    if (
-                      e.target instanceof HTMLElement &&
-                      e.target.closest("a")
-                    )
-                      return;
-                    navigate(`/track/${t.video_id}`);
-                  }}
                 >
                   <span className="text-muted-foreground tabular-nums">
                     {i + 1}
@@ -343,6 +336,7 @@ export function ArtistPage() {
                     target="_blank"
                     rel="noopener noreferrer"
                     className="shrink-0"
+                    onClick={(e) => e.stopPropagation()}
                   >
                     <img
                       src={`https://i.ytimg.com/vi/${t.video_id}/mqdefault.jpg`}
@@ -358,6 +352,7 @@ export function ArtistPage() {
                       rel="noopener noreferrer"
                       className="block truncate text-sm hover:underline max-w-fit"
                       title={t.title}
+                      onClick={(e) => e.stopPropagation()}
                     >
                       {t.title}
                     </a>
@@ -368,21 +363,31 @@ export function ArtistPage() {
                       {t.channel}
                     </Link>
                   </span>
-                  <span className="flex flex-col items-start gap-0.5">
+                  <span className="flex min-w-0 flex-col items-start gap-0.5 overflow-hidden">
                     {t.cluster_name ? (
-                      <Badge variant="outline">{t.cluster_name}</Badge>
+                      <Badge variant="outline" className="max-w-full">
+                        <span className="truncate">{t.cluster_name}</span>
+                      </Badge>
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}
                     {t.genres?.[0] && (
-                      <Badge variant="secondary" className="font-normal">
-                        {genreLabel(t.genres[0])}
-                        {t.language ? ` · ${t.language}` : ""}
+                      <Badge
+                        variant="secondary"
+                        className="max-w-full font-normal"
+                      >
+                        <span className="truncate">
+                          {genreLabel(t.genres[0])}
+                          {t.language ? ` · ${t.language}` : ""}
+                        </span>
                       </Badge>
                     )}
                     {!t.genres?.length && t.language && (
-                      <Badge variant="secondary" className="font-normal">
-                        {t.language}
+                      <Badge
+                        variant="secondary"
+                        className="max-w-full font-normal"
+                      >
+                        <span className="truncate">{t.language}</span>
                       </Badge>
                     )}
                   </span>
@@ -410,7 +415,7 @@ export function ArtistPage() {
                   <span className="text-muted-foreground text-right text-sm tabular-nums">
                     {formatDuration(t.duration)}
                   </span>
-                </div>
+                </Link>
               ))}
             </div>
           </div>

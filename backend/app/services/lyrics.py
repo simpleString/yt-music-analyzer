@@ -13,6 +13,7 @@ from app.config import settings
 from app.db import engine
 from app.models import AudioFeatures, Lyrics, Track
 from app.services import jobs
+from app.services import errors as errors_svc
 from app.services.topics import extract_topics
 
 LRCLIB_SEARCH = "https://lrclib.net/api/search"
@@ -331,9 +332,13 @@ def run_lyrics(stop: threading.Event | None = None) -> None:
                     break
                 try:
                     row, ratio = _fetch_lyrics(track, client)
-                except httpx.HTTPError:
-                    # network outage — do not cache misses, abort soon
+                except httpx.HTTPError as exc:
+                    # network outage — log the per-track failure, do not
+                    # cache misses, abort soon
                     net_errors += 1
+                    errors_svc.log_error(
+                        track.video_id, "lyrics", f"network: {exc}"
+                    )
                     if net_errors >= 10:
                         jobs.fail_job(
                             "lyrics", "network unavailable (10 consecutive errors)"
@@ -341,6 +346,9 @@ def run_lyrics(stop: threading.Event | None = None) -> None:
                         return
                     continue
                 net_errors = 0
+                # a definite outcome (found or a confident miss) clears
+                # any earlier network error for this track
+                errors_svc.clear_error(track.video_id, "lyrics")
                 if row is not None:
                     with Session(engine) as session:
                         session.add(row)

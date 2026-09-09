@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 from app.db import engine
 from app.models import AppMeta, Job
 
-KINDS = ("import", "filter", "audio", "clusters", "lyrics", "mb-genres")
+KINDS = ("import", "filter", "audio", "clusters", "lyrics", "mb-genres", "sessions")
 
 # a job whose progress hasn't been updated for longer than this is
 # considered dead (its thread died with the server restart) and may be

@@ -6,13 +6,12 @@ probability of hearing the track at this hour and on this weekday with
 its overall popularity (log) and a penalty for very recent repeats.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 from sqlmodel import Session
 
-from app.config import settings
 from app.db import engine
 from app.models import Track
 
@@ -42,14 +41,19 @@ def for_now(
     limit: int = 12,
     date_from=None,
     date_to=None,
+    tz_name: str = "",
 ) -> dict:
     """Top tracks for the given moment.
 
-    hour: 0..23, weekday: 0=Mon..6=Sun; None — take from the configured
-    timezone. date_from/date_to limit the listen history used for scoring.
+    hour: 0..23, weekday: 0=Mon..6=Sun; None — take from the browser
+    timezone (tz_name, IANA), UTC as the last-resort fallback.
+    date_from/date_to limit the listen history used for scoring.
     Returns {"hour", "weekday", "total", "items"}.
     """
-    now_local = datetime.now(ZoneInfo(settings.timezone))
+    try:
+        now_local = datetime.now(ZoneInfo(tz_name))
+    except (ValueError, KeyError):
+        now_local = datetime.now(dt_timezone.utc).replace(tzinfo=None)
     if hour is None:
         hour = now_local.hour
     if weekday is None:

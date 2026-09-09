@@ -62,6 +62,21 @@ export function languageLabel(code: string): string {
   return LANG_LABELS[code] ?? code
 }
 
+// Essentia mood heads (AudioFeatures.mood_*), same order as the backend
+export const MOOD_LABELS: Record<string, string> = {
+  happy: "Happy",
+  sad: "Sad",
+  relaxed: "Calm",
+  aggressive: "Aggressive",
+  electronic: "Electronic",
+  acoustic: "Acoustic",
+  party: "Party",
+  epic: "Epic",
+  dark: "Dark",
+  romantic: "Romantic",
+  atmospheric: "Atmospheric",
+}
+
 const REASON_LABELS: [string, string][] = [
   ["yt-music-app", "played in YouTube Music"],
   ["topic-channel", "Topic channel"],

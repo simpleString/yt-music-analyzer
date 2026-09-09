@@ -16,11 +16,11 @@ import {
 import { Ban, Check, EyeOff } from "lucide-react";
 
 import { api, type TrackSort } from "@/lib/api";
-import { techTooltip, languageLabel } from "@/lib/track";
+import { techTooltip, languageLabel, MOOD_LABELS } from "@/lib/track";
 import { cn, artistPath } from "@/lib/utils";
 import { LoadingNote } from "@/components/LoadingNote";
+import { TrackBadges } from "@/components/TrackBadges";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -83,6 +83,7 @@ export function Tracks() {
   const genre = searchParams.get("genre") ?? "";
   const language = searchParams.get("language") ?? "";
   const key = searchParams.get("key") ?? "";
+  const mood = searchParams.get("mood") ?? "";
   const instrumental = searchParams.get("instrumental") === "1";
   const errorsOnly = searchParams.get("errors") === "1";
   const targetPage = Math.max(1, Number(searchParams.get("page")) || 1);
@@ -113,6 +114,7 @@ export function Tracks() {
       genre: null,
       language: null,
       key: null,
+      mood: null,
       instrumental: null,
       errors: null,
       page: null,
@@ -138,8 +140,11 @@ export function Tracks() {
     queryFn: api.keys,
     staleTime: 5 * 60 * 1000,
   });
-  const genreLabel = (name: string): string =>
-    genres?.find((g) => g.name === name)?.name_ru ?? name;
+  const { data: moodCounts } = useQuery({
+    queryKey: ["mood-counts"],
+    queryFn: api.moodCounts,
+    staleTime: 5 * 60 * 1000,
+  });
 
   const {
     data,
@@ -159,6 +164,7 @@ export function Tracks() {
       genre,
       language,
       key,
+      mood,
       instrumental,
       errorsOnly,
     ],
@@ -173,6 +179,7 @@ export function Tracks() {
         genre,
         language,
         key,
+        mood,
         instrumental,
         errors: errorsOnly,
       }),
@@ -415,15 +422,37 @@ export function Tracks() {
                 }
               >
                 <SelectTrigger className="w-60">
-                  <SelectValue placeholder="All moods" />
+                  <SelectValue placeholder="All sound clusters" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All moods</SelectItem>
+                  <SelectItem value="all">All sound clusters</SelectItem>
                   {clusters?.map((c) => (
                     <SelectItem key={c.id} value={String(c.id)}>
                       {c.name} · {c.size}
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={mood || "any"}
+                onValueChange={(v) =>
+                  setParams({ mood: v === "any" ? null : v, page: null })
+                }
+              >
+                <SelectTrigger className="w-44">
+                  <SelectValue placeholder="Any mood" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="any">Any mood</SelectItem>
+                  {Object.entries(MOOD_LABELS).map(([m, label]) => {
+                    const count = moodCounts?.find((c) => c.name === m)?.count;
+                    return (
+                      <SelectItem key={m} value={m}>
+                        {label}
+                        {count != null ? ` (${count})` : ""}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
               <Select
@@ -633,43 +662,12 @@ export function Tracks() {
                         {t.channel}
                       </Link>
                     </span>
-                    <span className="flex min-w-0 flex-col items-start gap-0.5 overflow-hidden">
-                      {t.has_error && (
-                        <Badge
-                          variant="destructive"
-                          className="max-w-full font-normal"
-                          title="processing error — see the track card"
-                        >
-                          <span className="truncate">error</span>
-                        </Badge>
-                      )}
-                      {t.cluster_name ? (
-                        <Badge variant="outline" className="max-w-full">
-                          <span className="truncate">{t.cluster_name}</span>
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                      {t.genres?.[0] && (
-                        <Badge
-                          variant="secondary"
-                          className="max-w-full font-normal"
-                        >
-                          <span className="truncate">
-                            {genreLabel(t.genres[0])}
-                            {t.language ? ` · ${t.language}` : ""}
-                          </span>
-                        </Badge>
-                      )}
-                      {!t.genres?.length && t.language && (
-                        <Badge
-                          variant="secondary"
-                          className="max-w-full font-normal"
-                        >
-                          <span className="truncate">{t.language}</span>
-                        </Badge>
-                      )}
-                    </span>
+                    <TrackBadges
+                      hasError={t.has_error}
+                      cluster={t.cluster_name}
+                      genres={t.genres}
+                      language={t.language}
+                    />
                     <span className="text-right text-sm tabular-nums">
                       {t.tempo != null ? Math.round(t.tempo) : "—"}
                     </span>

@@ -170,6 +170,7 @@ export interface TracksParams {
   genre: string
   language: string
   key: string
+  mood?: string
   instrumental: boolean
   artist?: string
   errors?: boolean
@@ -242,6 +243,11 @@ export interface LanguageOption {
   count: number
 }
 
+export interface MoodCount {
+  name: string
+  count: number
+}
+
 export interface KeyOption {
   key: string
   count: number
@@ -271,6 +277,7 @@ export interface DashboardKpi {
 export interface NewArtist {
   name: string
   plays: number
+  top_video_id: string
 }
 
 export interface NewTrack {
@@ -279,6 +286,10 @@ export interface NewTrack {
   channel: string
   artist: string
   plays: number
+  duration: number | null
+  tempo: number | null
+  energy: number | null
+  info?: TrackExtraInfo | null
 }
 
 export interface Discoveries {
@@ -303,8 +314,10 @@ export interface AvgFeatures {
 }
 
 export interface MoodPoint {
-  energy: number
-  sentiment: number | null
+  happy: number
+  sad: number
+  relaxed: number
+  party: number
   listens: number
 }
 
@@ -317,7 +330,6 @@ export interface VocalSplit {
 export interface DashboardData {
   totals: Totals
   kpi: DashboardKpi
-  discoveries: Discoveries
   genre_distribution: GenreCount[]
   genre_coverage: number
   avg_features: AvgFeatures
@@ -361,6 +373,8 @@ export interface SimilarTrack {
 
 export interface TrackExtraInfo {
   cluster: string
+  genre?: string
+  language?: string
   tempo: number | null
   energy: number | null
   danceability: number | null
@@ -434,6 +448,7 @@ export interface ContextItem {
   at_weekday: number
   score: number
   reason: string
+  info?: TrackExtraInfo | null
 }
 
 export interface ContextData {
@@ -568,6 +583,7 @@ export const api = {
     genre,
     language,
     key,
+    mood,
     instrumental,
     artist,
     errors: errorsOnly,
@@ -584,6 +600,7 @@ export const api = {
     if (genre) sp.set("genre", genre)
     if (language) sp.set("language", language)
     if (key) sp.set("key", key)
+    if (mood) sp.set("mood", mood)
     if (instrumental) sp.set("instrumental", "true")
     if (artist) sp.set("artist", artist)
     if (errorsOnly) sp.set("errors", "true")
@@ -597,6 +614,21 @@ export const api = {
   languages: () => getJson<LanguageOption[]>("/api/languages"),
   keys: () => getJson<KeyOption[]>("/api/keys"),
   errors: () => getJson<ProcessingErrorItem[]>("/api/errors"),
+  moodCounts: () => getJson<MoodCount[]>("/api/mood-counts"),
+  discoveries: (
+    artistsLimit = 8,
+    tracksLimit = 8,
+    from?: string | null,
+    to?: string | null
+  ) => {
+    const sp = new URLSearchParams({
+      artists_limit: String(artistsLimit),
+      tracks_limit: String(tracksLimit),
+    })
+    if (from) sp.set("date_from", from)
+    if (to) sp.set("date_to", to)
+    return getJson<Discoveries>(`/api/discoveries?${sp}`)
+  },
   classifyTrack: (videoId: string, isMusic: boolean) =>
     postJson("/api/tracks/" + encodeURIComponent(videoId) + "/classify", {
       is_music: isMusic,
@@ -643,6 +675,7 @@ export const api = {
       hour: String(now.getHours()),
       weekday: String((now.getDay() + 6) % 7),
       limit: String(limit),
+      tz: browserTimezone(),
     })
     if (from) sp.set("date_from", from)
     if (to) sp.set("date_to", to)

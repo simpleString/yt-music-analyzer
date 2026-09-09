@@ -89,21 +89,11 @@ def totals(
     }
 
 
-def artists(session: Session, limit: int = 20000) -> list[dict]:
-    """All artists (canonical) with plays/track counts and last listen."""
+def _artist_top_video(session: Session) -> dict[str, str]:
+    """Representative (most played) video per canonical artist — used as
+    the artist image (YouTube thumbnail) in the artists lists."""
     join, params = _music_listen_join()
     rows = session.execute(
-        text(
-            f"SELECT {ARTIST_EXPR} AS artist, COUNT(*) AS plays, "
-            "COUNT(DISTINCT t.video_id) AS tracks, MAX(l.listened_at) AS last "
-            + join
-            + f" AND {ARTIST_EXPR} != '' GROUP BY artist ORDER BY plays DESC LIMIT :lim"
-        ),
-        {**params, "lim": limit},
-    ).all()
-    # representative video per artist (most played track) — used as the
-    # artist image (YouTube thumbnail) in the artists list
-    top_rows = session.execute(
         text(
             "SELECT artist, video_id FROM ("
             f" SELECT {ARTIST_EXPR} AS artist, t.video_id AS video_id, "
@@ -116,7 +106,22 @@ def artists(session: Session, limit: int = 20000) -> list[dict]:
         ),
         params,
     ).all()
-    top_video = {r[0]: r[1] for r in top_rows}
+    return {r[0]: r[1] for r in rows}
+
+
+def artists(session: Session, limit: int = 20000) -> list[dict]:
+    """All artists (canonical) with plays/track counts and last listen."""
+    join, params = _music_listen_join()
+    rows = session.execute(
+        text(
+            f"SELECT {ARTIST_EXPR} AS artist, COUNT(*) AS plays, "
+            "COUNT(DISTINCT t.video_id) AS tracks, MAX(l.listened_at) AS last "
+            + join
+            + f" AND {ARTIST_EXPR} != '' GROUP BY artist ORDER BY plays DESC LIMIT :lim"
+        ),
+        {**params, "lim": limit},
+    ).all()
+    top_video = _artist_top_video(session)
     return [
         {
             "channel": r[0],
@@ -329,7 +334,11 @@ def kpi(
 
 
 def discoveries(
-    session: Session, date_from: date | None = None, date_to: date | None = None, limit: int = 5
+    session: Session,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    artists_limit: int = 5,
+    tracks_limit: int = 5,
 ) -> dict:
     """Artists/tracks heard for the first time inside the period."""
     from_, to = _period_bounds(date_from, date_to)
@@ -340,7 +349,12 @@ def discoveries(
         "WHERE t.is_music = 1"
     )
     in_period = " AND l.listened_at >= :dfrom AND l.listened_at < :dto"
-    params = {"dfrom": dfrom, "dto": dto, "lim": limit}
+    params = {
+        "dfrom": dfrom,
+        "dto": dto,
+        "alim": artists_limit,
+        "tlim": tracks_limit,
+    }
 
     artists = session.execute(
         text(
@@ -352,7 +366,7 @@ def discoveries(
             f" AND {ARTIST_EXPR} != '' GROUP BY artist"
             ") f ON f.artist = a.artist"
             " WHERE f.first >= :dfrom AND f.first < :dto"
-            " ORDER BY a.plays DESC LIMIT :lim"
+            " ORDER BY a.plays DESC LIMIT :alim"
         ),
         params,
     ).all()
@@ -368,17 +382,19 @@ def discoveries(
 
     tracks = session.execute(
         text(
-            "SELECT nt.video_id, nt.title, nt.channel, nt.artist, nt.plays FROM ("
-            " SELECT t.video_id, t.title, t.channel, "
+            "SELECT nt.video_id, nt.title, nt.channel, nt.artist, nt.plays, "
+            "nt.duration, f.tempo, f.energy FROM ("
+            " SELECT t.video_id, t.title, t.channel, t.duration, "
             f" {ARTIST_EXPR} AS artist, COUNT(*) AS plays {base}{in_period}"
             " GROUP BY t.video_id"
             ") nt JOIN ("
             " SELECT t.video_id, MIN(l.listened_at) AS first "
             + base
             + " GROUP BY t.video_id"
-            ") ft ON ft.video_id = nt.video_id"
-            " WHERE ft.first >= :dfrom AND ft.first < :dto"
-            " ORDER BY nt.plays DESC LIMIT :lim"
+            ") ft ON ft.video_id = nt.video_id "
+            "LEFT JOIN audio_features f ON f.track_id = nt.video_id "
+            "WHERE ft.first >= :dfrom AND ft.first < :dto"
+            " ORDER BY nt.plays DESC LIMIT :tlim"
         ),
         params,
     ).all()
@@ -393,10 +409,19 @@ def discoveries(
         params,
     ).scalar()
 
+    # representative video per artist — used as the artist image,
+    # same approach as the artists list page
+    top_video = _artist_top_video(session)
+
     return {
         "new_artists_total": int(new_artists_total or 0),
         "top_new_artists": [
-            {"name": r[0], "plays": int(r[1])} for r in artists
+            {
+                "name": r[0],
+                "plays": int(r[1]),
+                "top_video_id": top_video.get(r[0], ""),
+            }
+            for r in artists
         ],
         "new_tracks_total": int(new_tracks_total or 0),
         "top_new_tracks": [
@@ -406,6 +431,9 @@ def discoveries(
                 "channel": r[2],
                 "artist": r[3],
                 "plays": int(r[4]),
+                "duration": r[5],
+                "tempo": round(float(r[6]), 1) if r[6] is not None else None,
+                "energy": round(float(r[7]), 2) if r[7] is not None else None,
             }
             for r in tracks
         ],
@@ -548,37 +576,28 @@ def mood_trend(
     date_to: date | None = None,
     granularity: str = "month",
 ) -> list[tuple[str, dict]]:
-    """Average energy and lyrics sentiment per bucket ('how mood evolved')."""
+    """Average Essentia moods per bucket ('how mood evolved')."""
     bucket = _bucket(granularity)
     fjoin, fparams = _feature_listen_join(date_from, date_to)
-    energy = {
-        r[0]: (r[1], r[2])
-        for r in session.execute(
-            text(
-                f"SELECT {bucket} AS b, AVG(f.energy), COUNT(*) "
-                + fjoin
-                + " GROUP BY b ORDER BY b"
-            ),
-            fparams,
-        ).all()
-    }
-    ljoin, lparams = _lyrics_listen_join(date_from, date_to)
-    sentiment = {
-        r[0]: r[1]
-        for r in session.execute(
-            text(
-                f"SELECT {bucket} AS b, AVG(ly.sentiment) "
-                + ljoin
-                + " GROUP BY b ORDER BY b"
-            ),
-            lparams,
-        ).all()
-    }
-    merged: dict[str, dict] = {}
-    for b, (e, n) in energy.items():
-        merged[b] = {
-            "energy": round(float(e), 3),
-            "sentiment": round(float(sentiment[b]), 3) if b in sentiment else None,
-            "listens": int(n),
-        }
-    return sorted(merged.items())
+    rows = session.execute(
+        text(
+            f"SELECT {bucket} AS b, AVG(f.mood_happy), AVG(f.mood_sad), "
+            "AVG(f.mood_relaxed), AVG(f.mood_party), COUNT(*) "
+            + fjoin
+            + " GROUP BY b ORDER BY b"
+        ),
+        fparams,
+    ).all()
+    return [
+        (
+            b,
+            {
+                "happy": round(float(happy), 3),
+                "sad": round(float(sad), 3),
+                "relaxed": round(float(relaxed), 3),
+                "party": round(float(party), 3),
+                "listens": int(n),
+            },
+        )
+        for b, happy, sad, relaxed, party, n in rows
+    ]

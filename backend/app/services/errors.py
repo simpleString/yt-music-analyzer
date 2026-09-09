@@ -4,7 +4,7 @@ Upsert on failure, delete on success: the table always holds only the
 current problems, so the UI can show "what exactly is broken".
 """
 
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 
 from sqlmodel import Session, select
 
@@ -12,6 +12,12 @@ from app.db import engine
 from app.models import Track, TrackError
 
 ERROR_MAX_LEN = 300
+
+
+def _iso_utc(dt: datetime) -> str:
+    """created_at is stored as naive UTC — add the explicit offset so the
+    browser renders it in the user's local timezone, not as UTC."""
+    return dt.replace(tzinfo=dt_timezone.utc).isoformat()
 
 
 def log_error(video_id: str, stage: str, error: str) -> None:
@@ -56,7 +62,7 @@ def track_errors(video_id: str) -> list[dict]:
         {
             "stage": r.stage,
             "error": r.error,
-            "created_at": r.created_at.isoformat(),
+            "created_at": _iso_utc(r.created_at),
         }
         for r in rows
     ]
@@ -79,7 +85,7 @@ def list_errors(limit: int = 200) -> list[dict]:
             "artist": t.artist_canonical or t.channel,
             "stage": te.stage,
             "error": te.error,
-            "created_at": te.created_at.isoformat(),
+            "created_at": _iso_utc(te.created_at),
         }
         for te, t in rows
     ]

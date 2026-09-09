@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import {
   Bar,
@@ -24,6 +24,7 @@ import { api } from "@/lib/api";
 import { languageLabel } from "@/lib/track";
 import { artistPath, cn, tracksPath } from "@/lib/utils";
 import { LoadingNote } from "@/components/LoadingNote";
+import { TrackRow, TrackTable } from "@/components/TrackTable";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -51,12 +52,28 @@ import {
 
 const chartConfig = {
   listens: { label: "plays" },
-  energy: { label: "energy" },
-  sentiment: { label: "mood (lyrics)" },
+  happy: { label: "Happy" },
+  sad: { label: "Sad" },
+  relaxed: { label: "Relaxed" },
+  party: { label: "Party" },
 }
 
+const MOOD_LINES = [
+  { key: "happy", label: "Happy", color: "var(--chart-2)" },
+  { key: "sad", label: "Sad", color: "var(--chart-3)" },
+  { key: "relaxed", label: "Relaxed", color: "var(--chart-4)" },
+  { key: "party", label: "Party", color: "var(--chart-5)" },
+] as const;
+type MoodKey = (typeof MOOD_LINES)[number]["key"];
+
 const CTX_GRID =
-  "grid grid-cols-[2.25rem_4.25rem_minmax(0,1fr)_6rem_11rem] items-center gap-1.5 px-1.5";
+  "grid grid-cols-[2.25rem_4.25rem_minmax(0,1fr)_10.5rem_4rem_4.5rem_4.5rem_4.5rem_4.5rem_4rem_11rem] items-center gap-1.5 px-1.5"
+
+const DISC_ARTIST_GRID =
+  "grid grid-cols-[2.25rem_4.25rem_minmax(0,1fr)_5.5rem] items-center gap-1.5 px-1.5"
+
+const DISC_TRACK_GRID =
+  "grid grid-cols-[2.25rem_4.25rem_minmax(0,1fr)_10.5rem_4rem_4.5rem_4.5rem_4.5rem_4.5rem_4rem] items-center gap-1.5 px-1.5";
 
 const MOOD_LABELS: Record<string, string> = {
   happy: "Happy",
@@ -131,7 +148,7 @@ function pct(part: number, total: number): number {
 }
 
 function fmtNum(n: number): string {
-  return n.toLocaleString("en-US");
+  return n.toLocaleString("en-US")
 }
 
 function Delta({ value, prev }: { value: number; prev: number | null }) {
@@ -205,7 +222,10 @@ export function Dashboard() {
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [granularity, setGranularity] = useState<"month" | "week">("month")
-  const [ctxLimit, setCtxLimit] = useState(8);
+  const [activeMood, setActiveMood] = useState<MoodKey | null>(null);
+  const [ctxLimit, setCtxLimit] = useState(8)
+  const [discArtistsLimit, setDiscArtistsLimit] = useState(8)
+  const [discTracksLimit, setDiscTracksLimit] = useState(8);
 
   const range = useMemo(
     () =>
@@ -229,6 +249,19 @@ export function Dashboard() {
     queryFn: () => api.contextRecs(ctxLimit, range.from, range.to),
     placeholderData: keepPreviousData,
     staleTime: 10 * 60 * 1000,
+  })
+
+  const { data: disc } = useQuery({
+    queryKey: [
+      "discoveries",
+      discArtistsLimit,
+      discTracksLimit,
+      range.from,
+      range.to,
+    ],
+    queryFn: () =>
+      api.discoveries(discArtistsLimit, discTracksLimit, range.from, range.to),
+    placeholderData: keepPreviousData,
   });
 
   const periodLabel =
@@ -238,22 +271,82 @@ export function Dashboard() {
         ? [range.from, range.to].filter(Boolean).join(" — ")
         : PRESET_LABELS[preset];
 
+  // period controls stay visible in every state (loading / error / empty),
+  // so an interval without data can always be changed
+  const header = (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <h1 className="text-lg font-bold text-black">Dashboard</h1>
+      <Select value={preset} onValueChange={(v) => setPreset(v as Preset)}>
+        <SelectTrigger className="w-40">
+          <SelectValue placeholder="Period" />
+        </SelectTrigger>
+        <SelectContent>
+          {(Object.keys(PRESET_LABELS) as Preset[]).map((p) => (
+            <SelectItem key={p} value={p}>
+              {PRESET_LABELS[p]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {preset === "custom" && (
+        <>
+          <Input
+            type="date"
+            className="w-36"
+            value={customFrom}
+            max={customTo || undefined}
+            onChange={(e) => setCustomFrom(e.target.value)}
+          />
+          <span className="text-muted-foreground text-sm">—</span>
+          <Input
+            type="date"
+            className="w-36"
+            value={customTo}
+            min={customFrom || undefined}
+            onChange={(e) => setCustomTo(e.target.value)}
+          />
+        </>
+      )}
+    </div>
+  );
+
   if (isLoading)
     return (
-      <div className="flex justify-center py-10">
-        <LoadingNote />
+      <div className="flex flex-col gap-3">
+        {header}
+        <div className="flex justify-center py-10">
+          <LoadingNote />
+        </div>
       </div>
     );
-  if (isError || !data) return <p>Failed to load data.</p>;
+  if (isError || !data)
+    return (
+      <div className="flex flex-col gap-3">
+        {header}
+        <Alert>
+          <AlertDescription>Failed to load data.</AlertDescription>
+        </Alert>
+      </div>
+    );
 
   if (!data.totals.music_listens) {
     return (
       <div className="flex flex-col gap-3">
-        <h1 className="text-lg font-bold text-black">Dashboard</h1>
+        {header}
         <Alert>
           <AlertDescription>
-            No data{periodLabel && ` for the period (${periodLabel})`}. First
-            import your history and run the music filter.
+            {preset === "all" ? (
+              <>
+                No data yet. First import your history and run the music
+                filter.
+              </>
+            ) : (
+              <>
+                No listens in this period
+                {periodLabel && ` (${periodLabel})`} — pick another interval
+                or switch to all time.
+              </>
+            )}
           </AlertDescription>
         </Alert>
       </div>
@@ -265,8 +358,10 @@ export function Dashboard() {
   const weekdays = data.by_weekday.map(([d, v]) => ({ day: d, listens: v }));
   const trend = data.mood_trend.map(([b, v]) => ({
     bucket: b,
-    energy: v.energy,
-    sentiment: v.sentiment,
+    happy: v.happy,
+    sad: v.sad,
+    relaxed: v.relaxed,
+    party: v.party,
   }));
   const moodRadar = Object.entries(data.mood_profile).map(([m, v]) => ({
     mood: MOOD_LABELS[m] ?? m,
@@ -289,7 +384,7 @@ export function Dashboard() {
 
   const discoveryLabel =
     preset === "all" ? "last 30 days" : periodLabel || "period";
-  const { kpi, discoveries } = data;
+  const { kpi } = data;
   const { avg_features: avg, vocal_split: vocal } = data;
 
   const WEEKDAY_NAMES = [
@@ -303,44 +398,13 @@ export function Dashboard() {
   ];
 
   return (
-    <div
-      className={`flex flex-col gap-3 transition-opacity ${
-        isFetching ? "pointer-events-none opacity-60" : ""
-      }`}
-    >
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <h1 className="text-lg font-bold text-black">Dashboard</h1>
-        <Select value={preset} onValueChange={(v) => setPreset(v as Preset)}>
-          <SelectTrigger className="w-40">
-            <SelectValue placeholder="Period" />
-          </SelectTrigger>
-          <SelectContent>
-            {(Object.keys(PRESET_LABELS) as Preset[]).map((p) => (
-              <SelectItem key={p} value={p}>
-                {PRESET_LABELS[p]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {preset === "custom" && (
-          <>
-            <Input
-              type="date"
-              className="w-36"
-              value={customFrom}
-              max={customTo || undefined}
-              onChange={(e) => setCustomFrom(e.target.value)}
-            />
-            <span className="text-muted-foreground text-sm">—</span>
-            <Input
-              type="date"
-              className="w-36"
-              value={customTo}
-              min={customFrom || undefined}
-              onChange={(e) => setCustomTo(e.target.value)}
-            />
-          </>
-        )}
+    <div className="flex flex-col gap-3">
+      {header}
+      <div
+        className={`flex flex-col gap-3 transition-opacity ${
+          isFetching ? "pointer-events-none opacity-60" : ""
+        }`}
+      >
         <div className=" flex flex-wrap items-center gap-x-5 gap-y-1">
           <KpiStat
             title="Plays"
@@ -363,7 +427,6 @@ export function Dashboard() {
             prev={kpi.tracks.prev}
           />
         </div>
-      </div>
 
       {ctx && ctx.items.length > 0 && (
         <Card>
@@ -376,99 +439,49 @@ export function Dashboard() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="border border-[#999999]">
-              <div
-                className={cn(
-                  CTX_GRID,
-                  "h-12 min-w-[40rem] border-b border-[#999999] bg-[#eeeeee] text-xs font-bold whitespace-nowrap text-black"
-                )}
-              >
-                <span>#</span>
-                <span />
-                <span>Track</span>
-                <span className="text-right">plays</span>
-                <span className="text-right">reason</span>
-              </div>
+            <TrackTable
+              grid={CTX_GRID}
+              extraHead={<span className="text-right">reason</span>}
+            >
               {ctx.items.map((it, i) => (
-                <Link
+                <TrackRow
                   key={it.track.video_id}
-                  to={`/track/${it.track.video_id}`}
-                  className={cn(
-                    CTX_GRID,
-                    "text-inherit no-underline hover:text-inherit visited:text-inherit h-12 min-w-[40rem] border-b border-[#e0e0e0] hover:bg-[#ffffcc]"
-                  )}
-                  onClick={() =>
-                    sessionStorage.setItem(
-                      "tracks-open-track",
-                      it.track.video_id,
-                    )
+                  videoId={it.track.video_id}
+                  title={it.track.title}
+                  channel={it.track.channel}
+                  artist={it.track.artist}
+                  plays={it.plays}
+                  info={it.info}
+                  index={i}
+                  grid={CTX_GRID}
+                  extra={
+                    <span className="flex items-center justify-end gap-1 overflow-hidden">
+                      {it.reason.split(", ").map((r) => {
+                        // color by reason type: hour pattern, weekday
+                        // pattern, or the generic fallback
+                        const color = r.startsWith("often at")
+                          ? "var(--chart-1)"
+                          : r.startsWith("on ")
+                            ? "var(--chart-4)"
+                            : "";
+                        return (
+                          <Badge
+                            key={r}
+                            variant={color ? "default" : "secondary"}
+                            className="max-w-[11rem] px-1.5 py-0 text-xs font-normal"
+                            style={
+                              color ? { backgroundColor: color } : undefined
+                            }
+                          >
+                            <span className="truncate">{r}</span>
+                          </Badge>
+                        );
+                      })}
+                    </span>
                   }
-                >
-                  <span className="text-muted-foreground tabular-nums">
-                    {i + 1}
-                  </span>
-                  <a
-                    href={`https://www.youtube.com/watch?v=${it.track.video_id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="shrink-0"
-                    title="Open on YouTube"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <img
-                      src={`https://i.ytimg.com/vi/${it.track.video_id}/default.jpg`}
-                      alt=""
-                      loading="lazy"
-                      className="h-10 w-10 border border-[#999999] object-cover"
-                    />
-                  </a>
-                  <span className="min-w-0">
-                    <a
-                      href={`https://www.youtube.com/watch?v=${it.track.video_id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block truncate text-sm hover:underline max-w-fit"
-                      title={it.track.title}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {it.track.title}
-                    </a>
-                    <Link
-                      to={artistPath(it.track.artist ?? it.track.channel)}
-                      className="text-muted-foreground block truncate text-xs hover:underline max-w-fit"
-                    >
-                      {it.track.channel}
-                    </Link>
-                  </span>
-                  <span className="text-right text-sm tabular-nums">
-                    {fmtNum(it.plays)}
-                  </span>
-                  <span className="flex items-center justify-end gap-1 overflow-hidden">
-                    {it.reason.split(", ").map((r) => {
-                      // color by reason type: hour pattern, weekday
-                      // pattern, or the generic fallback
-                      const color = r.startsWith("often at")
-                        ? "var(--chart-1)"
-                        : r.startsWith("on ")
-                          ? "var(--chart-4)"
-                          : "";
-                      return (
-                        <Badge
-                          key={r}
-                          variant={color ? "default" : "secondary"}
-                          className="max-w-[11rem] px-1.5 py-0 text-xs font-normal"
-                          style={
-                            color ? { backgroundColor: color } : undefined
-                          }
-                        >
-                          <span className="truncate">{r}</span>
-                        </Badge>
-                      );
-                    })}
-                  </span>
-                </Link>
+                />
               ))}
-            </div>
+            </TrackTable>
             {ctx.items.length < ctx.total && (
               <div className="mt-2 flex justify-center">
                 <Button
@@ -491,113 +504,124 @@ export function Dashboard() {
             Artists and tracks heard for the first time ({discoveryLabel})
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-2">
+        <CardContent>
           <div>
             <p className="mb-2 text-sm">
               <span className="font-bold">
-                {fmtNum(discoveries.new_artists_total)}
+                {fmtNum(disc?.new_artists_total ?? 0)}
               </span>{" "}
               <span className="text-muted-foreground">new artists</span>
             </p>
-            <div className="flex flex-col gap-1">
-              {discoveries.top_new_artists.map((a) => (
+            <div className="border border-[#999999]">
+              <div
+                className={cn(
+                  DISC_ARTIST_GRID,
+                  "h-12 border-b border-[#999999] bg-[#eeeeee] text-xs font-bold whitespace-nowrap text-black"
+                )}
+              >
+                <span>#</span>
+                <span />
+                <span>Artist</span>
+                <span className="text-right">plays</span>
+              </div>
+              {(disc?.top_new_artists ?? []).map((a, i) => (
                 <div
                   key={a.name}
-                  className="flex items-center justify-between gap-2"
+                  className={cn(
+                    DISC_ARTIST_GRID,
+                    "h-12 cursor-pointer border-b border-[#e0e0e0] hover:bg-[#ffffcc]"
+                  )}
+                  onClick={() => navigate(artistPath(a.name))}
                 >
-                  <Link
-                    to={artistPath(a.name)}
-                    className="truncate text-sm hover:underline"
-                  >
+                  <span className="text-muted-foreground tabular-nums">
+                    {i + 1}
+                  </span>
+                  {a.top_video_id ? (
+                    <img
+                      src={`https://i.ytimg.com/vi/${a.top_video_id}/default.jpg`}
+                      alt=""
+                      loading="lazy"
+                      className="h-10 w-10 border border-[#999999] object-cover"
+                    />
+                  ) : (
+                    <span className="block h-10 w-10 border border-[#e0e0e0] bg-[#eeeeee]" />
+                  )}
+                  <span className="truncate text-sm" title={a.name}>
                     {a.name}
-                  </Link>
-                  <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-                    {fmtNum(a.plays)} plays
+                  </span>
+                  <span className="text-right text-sm tabular-nums">
+                    {fmtNum(a.plays)}
                   </span>
                 </div>
               ))}
+              {disc && disc.top_new_artists.length === 0 && (
+                <p className="text-muted-foreground px-2 py-3 text-center text-xs">
+                  No new artists in this period.
+                </p>
+              )}
             </div>
+            {disc && discArtistsLimit < Math.min(50, disc.new_artists_total) && (
+              <div className="mt-2 flex justify-center">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDiscArtistsLimit((l) => l + 8)}
+                >
+                  Show more artists (
+                  {fmtNum(
+                    Math.min(disc.new_artists_total, 50) -
+                      disc.top_new_artists.length
+                  )}{" "}
+                  left)
+                </Button>
+              </div>
+            )}
           </div>
-          <div>
+
+          <div className="mt-4">
             <p className="mb-2 text-sm">
               <span className="font-bold">
-                {fmtNum(discoveries.new_tracks_total)}
+                {fmtNum(disc?.new_tracks_total ?? 0)}
               </span>{" "}
               <span className="text-muted-foreground">new tracks</span>
             </p>
-            <div className="flex flex-col gap-1">
-              {discoveries.top_new_tracks.map((t) => (
-                <div
+            <TrackTable grid={DISC_TRACK_GRID}>
+              {(disc?.top_new_tracks ?? []).map((t, i) => (
+                <TrackRow
                   key={t.video_id}
-                  className="flex items-center justify-between gap-2"
-                >
-                  <a
-                    href={`https://www.youtube.com/watch?v=${t.video_id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="truncate text-sm hover:underline"
-                    title={t.title}
-                  >
-                    {t.title}
-                  </a>
-                  <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-                    {fmtNum(t.plays)} plays
-                  </span>
-                </div>
+                  videoId={t.video_id}
+                  title={t.title}
+                  channel={t.channel}
+                  artist={t.artist}
+                  plays={t.plays}
+                  info={t.info}
+                  index={i}
+                  grid={DISC_TRACK_GRID}
+                />
               ))}
-            </div>
+              {disc && disc.top_new_tracks.length === 0 && (
+                <p className="text-muted-foreground px-2 py-3 text-center text-xs">
+                  No new tracks in this period.
+                </p>
+              )}
+            </TrackTable>
+            {disc && discTracksLimit < Math.min(50, disc.new_tracks_total) && (
+              <div className="mt-2 flex justify-center">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDiscTracksLimit((l) => l + 8)}
+                >
+                  Show more tracks (
+                  {fmtNum(
+                    Math.min(disc.new_tracks_total, 50) -
+                      disc.top_new_tracks.length
+                  )}{" "}
+                  left)
+                </Button>
+              </div>
+            )}
           </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Mood over time</CardTitle>
-          <CardDescription>
-            Average energy of listened tracks and lyrics sentiment,{" "}
-            {granularity === "month" ? "by month" : "by week"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ChartContainer
-            config={chartConfig}
-            className="aspect-auto h-56 w-full"
-          >
-            <LineChart data={trend}>
-              <CartesianGrid vertical={false} />
-              <XAxis
-                dataKey="bucket"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                minTickGap={24}
-              />
-              <YAxis yAxisId="energy" domain={[0, 1]} width={32} />
-              <YAxis
-                yAxisId="sentiment"
-                orientation="right"
-                domain={[-1, 1]}
-                width={32}
-              />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Line
-                yAxisId="energy"
-                dataKey="energy"
-                type="linear"
-                stroke="var(--chart-1)"
-                dot={false}
-                strokeWidth={1.5}
-              />
-              <Line
-                yAxisId="sentiment"
-                dataKey="sentiment"
-                type="linear"
-                stroke="var(--chart-4)"
-                dot={false}
-                strokeWidth={1.5}
-              />
-            </LineChart>
-          </ChartContainer>
         </CardContent>
       </Card>
 
@@ -648,6 +672,77 @@ export function Dashboard() {
               />
             </LineChart>
           </ChartContainer>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Mood over time</CardTitle>
+          <CardDescription>
+            Average Essentia moods of analyzed listens,{" "}
+            {granularity === "month" ? "by month" : "by week"}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ChartContainer
+            config={chartConfig}
+            className="aspect-auto h-56 w-full"
+          >
+            <LineChart data={trend}>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                dataKey="bucket"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                minTickGap={24}
+              />
+              <YAxis domain={[0, 1]} width={32} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              {MOOD_LINES.map((m) => (
+                <Line
+                  key={m.key}
+                  dataKey={m.key}
+                  type="linear"
+                  stroke={m.color}
+                  dot={false}
+                  strokeWidth={1.5}
+                  strokeOpacity={
+                    activeMood === null || activeMood === m.key ? 1 : 0.15
+                  }
+                />
+              ))}
+            </LineChart>
+          </ChartContainer>
+          <div className="flex items-center justify-center gap-4 pt-3">
+            {MOOD_LINES.map((m) => {
+              const dimmed = activeMood !== null && activeMood !== m.key;
+              return (
+                <button
+                  key={m.key}
+                  type="button"
+                  onClick={() =>
+                    setActiveMood(activeMood === m.key ? null : m.key)
+                  }
+                  title={
+                    activeMood === m.key
+                      ? "show all moods"
+                      : "highlight this mood"
+                  }
+                  className={cn(
+                    "flex cursor-pointer items-center gap-1.5 border-0 bg-transparent p-0 text-xs text-foreground",
+                    dimmed ? "opacity-40" : "",
+                  )}
+                >
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                    style={{ backgroundColor: m.color }}
+                  />
+                  {m.label}
+                </button>
+              );
+            })}
+          </div>
         </CardContent>
       </Card>
 
@@ -1004,6 +1099,7 @@ export function Dashboard() {
             </ChartContainer>
           </CardContent>
         </Card>
+      </div>
       </div>
     </div>
   );

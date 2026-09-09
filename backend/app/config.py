@@ -12,7 +12,6 @@ class Settings(BaseSettings):
 
     youtube_api_key: str = ""
     youtube_daily_quota: int = 10000
-    timezone: str = "Europe/Moscow"
     data_dir: Path = Path("data")
     frontend_dist: Path = _REPO_ROOT / "frontend" / "dist"
     audio_analysis_limit: int = 5

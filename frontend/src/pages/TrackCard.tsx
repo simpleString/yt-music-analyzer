@@ -20,12 +20,13 @@ import {
 import {
   api,
   type MixableItem,
-  type TrackExtraInfo,
   type YtmSimilarTrack,
 } from "@/lib/api";
 import { techTooltip } from "@/lib/track";
 import { artistPath, cn } from "@/lib/utils";
 import { LoadingNote } from "@/components/LoadingNote";
+import { TrackBadges } from "@/components/TrackBadges";
+import { TrackRow, TrackTable } from "@/components/TrackTable";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -196,136 +197,6 @@ const NEXT_GRID =
 const MIX_GRID =
   "grid grid-cols-[2.25rem_4.25rem_minmax(0,1fr)_10.5rem_4rem_4.5rem_4.5rem_4.5rem_4.5rem_4rem_4.5rem_7.5rem_4.5rem] items-center gap-1.5 px-1.5";
 
-function TrackTable({
-  grid,
-  extraHead,
-  children,
-}: {
-  grid: string;
-  extraHead: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div className="overflow-x-auto border border-[#999999]">
-      <div
-        className={cn(
-          grid,
-          "h-12 border-b border-[#999999] bg-[#eeeeee] text-xs font-bold text-black whitespace-nowrap",
-        )}
-      >
-        <span>#</span>
-        <span />
-        <span>Track</span>
-        <span>Mood</span>
-        <span className="text-right">BPM</span>
-        <span className="text-right">energy</span>
-        <span className="text-right">dance.</span>
-        <span className="text-right">acoust.</span>
-        <span className="text-right">length</span>
-        <span className="text-right">plays</span>
-        {extraHead}
-      </div>
-      <div>{children}</div>
-    </div>
-  );
-}
-
-function TrackGridRow({
-  videoId,
-  title,
-  channel,
-  artist,
-  plays,
-  info,
-  index,
-  grid,
-  rowTitle,
-  extra,
-}: {
-  videoId: string;
-  title: string;
-  channel: string;
-  artist?: string;
-  plays: number;
-  info?: TrackExtraInfo | null;
-  index: number;
-  grid: string;
-  rowTitle?: string;
-  extra?: ReactNode;
-}) {
-  return (
-    <Link
-      to={`/track/${videoId}`}
-      className={cn(
-        grid,
-        "text-inherit no-underline hover:text-inherit visited:text-inherit h-12 hover:bg-[#ffffcc] border-b border-[#e0e0e0]",
-      )}
-      title={rowTitle}
-      onClick={() => sessionStorage.setItem("tracks-open-track", videoId)}
-    >
-      <span className="text-muted-foreground tabular-nums">{index + 1}</span>
-      <a
-        href={`https://www.youtube.com/watch?v=${videoId}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="shrink-0"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <img
-          src={`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`}
-          alt=""
-          loading="lazy"
-          className="h-10 w-[71px] shrink-0 border border-[#999999] object-cover"
-        />
-      </a>
-      <span className="min-w-0">
-        <a
-          href={`https://www.youtube.com/watch?v=${videoId}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block truncate text-sm hover:underline max-w-fit"
-          title={title}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {title}
-        </a>
-        <Link
-          to={artistPath(artist ?? channel)}
-          className="text-muted-foreground block truncate text-xs hover:underline max-w-fit"
-        >
-          {channel}
-        </Link>
-      </span>
-      <span className="min-w-0">
-        {info?.cluster ? (
-          <Badge variant="outline" className="max-w-full">
-            <span className="truncate">{info.cluster}</span>
-          </Badge>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-      </span>
-      <span className="text-right text-sm tabular-nums">
-        {info?.tempo != null ? Math.round(info.tempo) : "—"}
-      </span>
-      <span className="text-muted-foreground text-right text-sm tabular-nums">
-        {info?.energy != null ? info.energy.toFixed(2) : "—"}
-      </span>
-      <span className="text-muted-foreground text-right text-sm tabular-nums">
-        {info?.danceability != null ? info.danceability.toFixed(2) : "—"}
-      </span>
-      <span className="text-muted-foreground text-right text-sm tabular-nums">
-        {info?.acousticness != null ? info.acousticness.toFixed(2) : "—"}
-      </span>
-      <span className="text-muted-foreground text-right text-sm tabular-nums">
-        {fmtDuration(info?.duration ?? null)}
-      </span>
-      <span className="text-right text-sm tabular-nums">{plays}</span>
-      {extra}
-    </Link>
-  );
-}
-
 function fmtDate(v: string | null): string {
   return v ? v.slice(0, 10) : "—";
 }
@@ -412,142 +283,70 @@ function YtmRow({ item, index }: { item: YtmSimilarTrack; index: number }) {
       `first: ${info.first_listen ?? "—"} · last: ${info.last_listen ?? "—"}`,
     );
   }
-  const tooltip = info
-    ? techTooltip(
-        {
-          tempo: info.tempo,
-          energy: info.energy,
-          danceability: info.danceability,
-          acousticness: info.acousticness,
-          language: info.language,
-        },
-        extras,
-      )
-    : "";
-  const rowCls = cn(
-    YTM_GRID,
-    "text-inherit no-underline hover:text-inherit visited:text-inherit h-12 min-w-[62rem] hover:bg-[#ffffcc] border-b border-[#e0e0e0]",
-  );
-  const cells = (
-    <>
-      <span className="text-muted-foreground tabular-nums">{index + 1}</span>
-      <a
-        href={`https://www.youtube.com/watch?v=${item.video_id}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="shrink-0"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <img
-          src={`https://i.ytimg.com/vi/${item.video_id}/mqdefault.jpg`}
-          alt=""
-          loading="lazy"
-          className="h-10 w-[71px] shrink-0 border border-[#999999] object-cover"
-        />
-      </a>
-      <span className="min-w-0">
-        <a
-          href={`https://www.youtube.com/watch?v=${item.video_id}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block truncate text-sm hover:underline max-w-fit"
-          title={item.title}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {item.title}
-        </a>
-        {item.artist ? (
-          <Link
-            to={artistPath(item.artist)}
-            className="text-muted-foreground block truncate text-xs hover:underline max-w-fit"
-          >
-            {item.artist}
-          </Link>
-        ) : (
-          <span className="text-muted-foreground block truncate text-xs">
-            {"\u00a0"}
+  return (
+    <TrackRow
+      asDiv={!item.in_history}
+      videoId={item.video_id}
+      title={item.title}
+      channel={item.artist}
+      info={info}
+      index={index}
+      grid={YTM_GRID}
+      rowClassName="min-w-[62rem]"
+      rowTitle={
+        info
+          ? techTooltip(
+              {
+                tempo: info.tempo,
+                energy: info.energy,
+                danceability: info.danceability,
+                acousticness: info.acousticness,
+                language: info.language,
+              },
+              extras,
+            )
+          : undefined
+      }
+      tail={
+        <>
+          <span className="text-right text-sm tabular-nums">
+            {info ? info.play_count : "—"}
           </span>
-        )}
-      </span>
-      <span className="flex min-w-0 flex-col items-start gap-0.5 overflow-hidden">
-        {info?.cluster ? (
-          <Badge variant="outline" className="max-w-full">
-            <span className="truncate">{info.cluster}</span>
-          </Badge>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-        {(info?.genre || info?.language) && (
-          <Badge variant="secondary" className="max-w-full font-normal">
-            <span className="truncate">
-              {[info?.genre, info?.language].filter(Boolean).join(" · ")}
-            </span>
-          </Badge>
-        )}
-      </span>
-      <span className="text-right text-sm tabular-nums">
-        {info?.tempo != null ? Math.round(info.tempo) : "—"}
-      </span>
-      <span className="text-muted-foreground text-right text-sm tabular-nums">
-        {info?.energy != null ? info.energy.toFixed(2) : "—"}
-      </span>
-      <span className="text-muted-foreground text-right text-sm tabular-nums">
-        {info?.danceability != null ? info.danceability.toFixed(2) : "—"}
-      </span>
-      <span className="text-muted-foreground text-right text-sm tabular-nums">
-        {info?.acousticness != null ? info.acousticness.toFixed(2) : "—"}
-      </span>
-      <span className="text-right text-sm tabular-nums">
-        {info ? info.play_count : "—"}
-      </span>
-      <span
-        className="text-right text-sm tabular-nums"
-        title={
-          info?.match != null
-            ? "audio similarity to this track (essentia tags)"
-            : undefined
-        }
-      >
-        {info?.match != null ? `${info.match}%` : "—"}
-      </span>
-      <span
-        className="text-muted-foreground text-right text-sm tabular-nums"
-        title="essentia distance to this track (lower = more similar)"
-      >
-        {info?.match != null ? ((100 - info.match) / 100).toFixed(3) : "—"}
-      </span>
-      <span className="text-center text-xs">
-        {item.in_history ? (
           <span
-            className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-600 text-[11px] font-bold text-white"
-            title="In your history"
+            className="text-right text-sm tabular-nums"
+            title={
+              info?.match != null
+                ? "audio similarity to this track (essentia tags)"
+                : undefined
+            }
           >
-            ✓
+            {info?.match != null ? `${info.match}%` : "—"}
           </span>
-        ) : (
-          ""
-        )}
-      </span>
-      <span className="text-muted-foreground text-right text-sm tabular-nums">
-        {fmtDuration(info?.duration ?? item.duration)}
-      </span>
-    </>
+          <span
+            className="text-muted-foreground text-right text-sm tabular-nums"
+            title="essentia distance to this track (lower = more similar)"
+          >
+            {info?.match != null ? ((100 - info.match) / 100).toFixed(3) : "—"}
+          </span>
+          <span className="text-center text-xs">
+            {item.in_history ? (
+              <span
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-600 text-[11px] font-bold text-white"
+                title="In your history"
+              >
+                ✓
+              </span>
+            ) : (
+              ""
+            )}
+          </span>
+          <span className="text-muted-foreground text-right text-sm tabular-nums">
+            {fmtDuration(info?.duration ?? item.duration)}
+          </span>
+        </>
+      }
+    />
   );
-  if (item.in_history) {
-    return (
-      <Link
-        to={`/track/${item.video_id}`}
-        className={rowCls}
-        title={tooltip || undefined}
-        onClick={() =>
-          sessionStorage.setItem("tracks-open-track", item.video_id)
-        }
-      >
-        {cells}
-      </Link>
-    );
-  }
-  return <div className={rowCls}>{cells}</div>;
 }
 
 function YtmTable({ items }: { items: YtmSimilarTrack[] }) {
@@ -833,15 +632,12 @@ export function TrackCard() {
             </div>
             <div className="grid grid-cols-2 items-center gap-1">
               <div className="flex flex-wrap gap-1 items-center">
-                {t.cluster_name && (
-                  <Badge
-                    variant="secondary"
-                    className="px-1.5 py-0 text-xs"
-                    title={`Mood cluster: tracks with a similar sound, grouped by audio features ("${t.cluster_name}")`}
-                  >
-                    {t.cluster_name}
-                  </Badge>
-                )}
+                <TrackBadges
+                  inline
+                  cluster={t.cluster_name}
+                  genre={t.genre_scores[0]?.name ?? null}
+                  language={t.language}
+                />
                 {t.topic && (
                   <Badge
                     variant="outline"
@@ -849,15 +645,6 @@ export function TrackCard() {
                     title={`Main theme of the lyrics, detected from the text ("${t.topic}")`}
                   >
                     {t.topic}
-                  </Badge>
-                )}
-                {t.language && (
-                  <Badge
-                    variant="outline"
-                    className="px-1.5 py-0 text-xs"
-                    title={`Language of the lyrics: ${t.language}`}
-                  >
-                    {t.language}
                   </Badge>
                 )}
                 {t.ytm?.album && (
@@ -1037,7 +824,7 @@ export function TrackCard() {
                       ? 0.5 + 0.5 * (1 - s.distance / similarMaxD)
                       : 1;
                   return (
-                    <TrackGridRow
+                    <TrackRow
                       key={s.track.video_id}
                       videoId={s.track.video_id}
                       title={s.track.title}
@@ -1129,7 +916,7 @@ export function TrackCard() {
                 }
             >
               {coItems.map((item, i) => (
-                <TrackGridRow
+                <TrackRow
                   key={item.track.video_id}
                   videoId={item.track.video_id}
                   title={item.track.title}
@@ -1203,7 +990,7 @@ export function TrackCard() {
                 }
             >
               {nextItems.map((item, i) => (
-                <TrackGridRow
+                <TrackRow
                   key={item.track.video_id}
                   videoId={item.track.video_id}
                   title={item.track.title}
@@ -1285,7 +1072,7 @@ export function TrackCard() {
                       ? 0.5 + 0.5 * (1 - s.distance / essentiaMaxD)
                       : 1;
                   return (
-                    <TrackGridRow
+                    <TrackRow
                       key={`${s.track.video_id}-${i}`}
                       videoId={s.track.video_id}
                       title={s.track.title}
@@ -1404,7 +1191,7 @@ export function TrackCard() {
               }
             >
               {mixData.items.slice(0, mixShown).map((item, i) => (
-                <TrackGridRow
+                <TrackRow
                   key={item.track.video_id}
                   videoId={item.track.video_id}
                   title={item.track.title}

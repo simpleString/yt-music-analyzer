@@ -90,10 +90,42 @@ def _track_payload(t: Track) -> dict:
     }
 
 
+def _top_mood_ids(session: Session, mood: str) -> list[str]:
+    """video_ids of analyzed tracks whose dominant mood is `mood`.
+
+    Essentia mood heads have incomparable scales (epic tops out at ~0.25
+    across the library while happy reaches 0.99): a raw argmax would make
+    some moods nearly unfilterable, so every head is normalized by its
+    own maximum before the argmax. Ties count as a match.
+    """
+    moods = stats_svc.MOODS
+    idx = moods.index(mood)
+    cols = ", ".join(f"mood_{m}" for m in moods)
+    rows = session.execute(
+        text(
+            "SELECT track_id, " + cols + " FROM audio_features "
+            "WHERE source = 'audio'"
+        )
+    ).all()
+    if not rows:
+        return []
+    maxes = [
+        max((r[i + 1] or 0.0) for r in rows) or 1.0 for i in range(len(moods))
+    ]
+    ids = []
+    for r in rows:
+        vals = [(r[i + 1] or 0.0) / maxes[i] for i in range(len(moods))]
+        if vals[idx] >= max(vals):
+            ids.append(r[0])
+    return ids
+
+
 def _feature_info(session: Session, video_id: str) -> dict:
     """Audio feature summary of a track for recommendation tables."""
     info: dict = {
         "cluster": "",
+        "genre": "",
+        "language": "",
         "tempo": None,
         "energy": None,
         "danceability": None,
@@ -114,6 +146,16 @@ def _feature_info(session: Session, video_id: str) -> dict:
         info["energy"] = _f(f.energy)
         info["danceability"] = _f(f.danceability)
         info["acousticness"] = _f(f.acousticness)
+        if f.tags:
+            try:
+                genres = json.loads(f.tags).get("genres") or []
+                if genres:
+                    info["genre"] = genres[0].get("name", "")
+            except (ValueError, TypeError, KeyError):
+                pass
+    ly = session.get(Lyrics, video_id)
+    if ly is not None:
+        info["language"] = ly.language
     return info
 
 
@@ -248,6 +290,7 @@ def api_tracks(
     genre: str = "",
     language: str = "",
     key: str = "",
+    mood: str = "",
     instrumental: bool = False,
     artist: str = "",
     errors: bool = False,
@@ -331,6 +374,15 @@ def api_tracks(
         conditions.append(
             and_(Lyrics.language == language, Lyrics.source != "whisper")
         )
+    if mood:
+        mood = mood.strip().lower()
+        if mood not in stats_svc.MOODS:
+            raise HTTPException(422, f"unknown mood: {mood}")
+        with Session(engine) as mood_session:
+            mood_ids = _top_mood_ids(mood_session, mood)
+        if not mood_ids:
+            return {"total": 0, "page": page, "per_page": per_page, "tracks": []}
+        conditions.append(Track.video_id.in_(mood_ids))
 
     first_listen = func.min(Listen.listened_at).label("first_listen")
     last_listen = func.max(Listen.listened_at).label("last_listen")
@@ -677,6 +729,63 @@ def api_errors() -> list[dict]:
     return errors_svc.list_errors()
 
 
+@app.get("/api/discoveries")
+def api_discoveries(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    artists_limit: int = 8,
+    tracks_limit: int = 8,
+) -> dict:
+    """New artists/tracks of the period (first listen inside it)."""
+    d_from = _parse_date(date_from, "date_from")
+    d_to = _parse_date(date_to, "date_to")
+    if d_from and d_to and d_from > d_to:
+        raise HTTPException(422, "date_from must be earlier than date_to")
+    with Session(engine) as session:
+        res = stats_svc.discoveries(
+            session,
+            d_from,
+            d_to,
+            artists_limit=max(1, min(artists_limit, 50)),
+            tracks_limit=max(1, min(tracks_limit, 50)),
+        )
+        for it in res["top_new_tracks"]:
+            it["info"] = _feature_info(session, it["video_id"])
+        return res
+
+
+@app.get("/api/mood-counts")
+def api_mood_counts() -> list[dict]:
+    """Track counts per dominant mood (tracks filter options).
+
+    Same per-head-max normalization as the `mood` filter in /api/tracks;
+    a track with tied dominant moods is counted for each of them, so the
+    numbers always match what selecting the mood returns.
+    """
+    moods = stats_svc.MOODS
+    cols = ", ".join(f"mood_{m}" for m in moods)
+    with Session(engine) as session:
+        rows = session.execute(
+            text(
+                "SELECT track_id, " + cols + " FROM audio_features "
+                "WHERE source = 'audio'"
+            )
+        ).all()
+    counts = [0] * len(moods)
+    if rows:
+        maxes = [
+            max((r[i + 1] or 0.0) for r in rows) or 1.0
+            for i in range(len(moods))
+        ]
+        for r in rows:
+            vals = [(r[i + 1] or 0.0) / maxes[i] for i in range(len(moods))]
+            top = max(vals)
+            for i, v in enumerate(vals):
+                if v == top:
+                    counts[i] += 1
+    return [{"name": m, "count": c} for m, c in zip(moods, counts)]
+
+
 @app.get("/api/keys")
 def api_keys() -> list[dict]:
     """Musical keys present in analyzed tracks, with counts (tracks filter)."""
@@ -735,7 +844,6 @@ def api_dashboard(
         return {
             "totals": stats_svc.totals(session, d_from, d_to),
             "kpi": stats_svc.kpi(session, d_from, d_to),
-            "discoveries": stats_svc.discoveries(session, d_from, d_to),
             "genre_distribution": genres,
             "genre_coverage": genre_coverage,
             "avg_features": stats_svc.avg_features(session, d_from, d_to),
@@ -958,35 +1066,10 @@ def api_youtube_similar(video_id: str) -> dict:
                     Listen.track_id == it["video_id"]
                 )
             ).one()
-            info: dict = {
-                "play_count": t.play_count,
-                "cluster": "",
-                "genre": "",
-                "language": "",
-                "first_listen": _date_str(fl[0]),
-                "last_listen": _date_str(fl[1]),
-                "duration": t.duration,
-            }
-            if t.cluster_id is not None:
-                c = session.get(Cluster, t.cluster_id)
-                if c is not None:
-                    info["cluster"] = c.name
-            f = session.get(AudioFeatures, it["video_id"])
-            if f is not None and f.source == "audio":
-                info["tempo"] = _f(f.tempo, 1)
-                info["energy"] = _f(f.energy)
-                info["danceability"] = _f(f.danceability)
-                info["acousticness"] = _f(f.acousticness)
-                if f.tags:
-                    try:
-                        genres = json.loads(f.tags).get("genres") or []
-                        if genres:
-                            info["genre"] = genres[0].get("name", "")
-                    except (ValueError, TypeError, KeyError):
-                        pass
-            ly = session.get(Lyrics, it["video_id"])
-            if ly is not None:
-                info["language"] = ly.language
+            info = _feature_info(session, it["video_id"])
+            info["play_count"] = t.play_count
+            info["first_listen"] = _date_str(fl[0])
+            info["last_listen"] = _date_str(fl[1])
             if seed_analyzed:
                 m = pair_essentia_match(video_id, it["video_id"])
                 if m is not None:
@@ -1038,6 +1121,7 @@ def api_recommendations_context(
     limit: int = 12,
     date_from: str | None = None,
     date_to: str | None = None,
+    tz: str = "",
 ) -> dict:
     """Tracks that fit the given (or current) time of day and weekday."""
     h = hour if 0 <= hour <= 23 else None
@@ -1046,9 +1130,18 @@ def api_recommendations_context(
     d_to = _parse_date(date_to, "date_to")
     if d_from and d_to and d_from > d_to:
         raise HTTPException(422, "date_from must be earlier than date_to")
-    return context_svc.for_now(
-        h, wd, limit=max(1, min(limit, 100)), date_from=d_from, date_to=d_to
+    res = context_svc.for_now(
+        h,
+        wd,
+        limit=max(1, min(limit, 100)),
+        date_from=d_from,
+        date_to=d_to,
+        tz_name=tz,
     )
+    with Session(engine) as session:
+        for it in res["items"]:
+            it["info"] = _feature_info(session, it["track"]["video_id"])
+    return res
 
 
 
@@ -1059,12 +1152,6 @@ SETTINGS_FIELDS: list[dict] = [
         "type": "str",
         "label": "YouTube API key",
         "hint": "YouTube Data API v3 key: the music filter uses it to detect video category and duration.",
-    },
-    {
-        "key": "timezone",
-        "type": "str",
-        "label": "Default timezone",
-        "hint": "IANA name (e.g. Europe/Moscow). Used at import if the browser provides none.",
     },
     {
         "key": "min_play_count",
@@ -1185,14 +1272,6 @@ def _coerce_setting(field: dict, value) -> object:
             coerced = str(value).strip()
     except (TypeError, ValueError):
         raise HTTPException(422, f"Invalid value for \"{field['label']}\"")
-    if field["key"] == "timezone":
-        try:
-            ZoneInfo(coerced)
-        except Exception:
-            raise HTTPException(
-                422,
-                "Timezone must be an IANA name, e.g. Europe/Moscow",
-            )
     if field["key"] == "min_play_count" and coerced < 1:
         raise HTTPException(422, "Minimum plays must be at least 1")
     return coerced

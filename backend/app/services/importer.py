@@ -4,7 +4,6 @@ from collections import Counter
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
-from app.config import settings
 from app.db import engine
 from app.models import Listen, Track
 from app.parsers.takeout import RawListen, load_history_file, parse_watch_history
@@ -24,7 +23,8 @@ def run_import(
             return
         stop = stop if stop is not None else threading.Event()
         data = load_history_file(filepath)
-        entries = parse_watch_history(data, tz_name or settings.timezone)
+        # tz always comes from the browser; UTC is the last-resort fallback
+        entries = parse_watch_history(data, tz_name or "UTC")
 
         seen: set[tuple[str, int]] = set()
         unique: list[RawListen] = []

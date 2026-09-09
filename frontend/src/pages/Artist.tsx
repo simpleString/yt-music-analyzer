@@ -10,6 +10,7 @@ import { api, type TrackListItem, type TrackSort } from "@/lib/api";
 import { techTooltip } from "@/lib/track";
 import { cn, artistPath } from "@/lib/utils";
 import { LoadingNote } from "@/components/LoadingNote";
+import { TrackBadges } from "@/components/TrackBadges";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -363,34 +364,11 @@ export function ArtistPage() {
                       {t.channel}
                     </Link>
                   </span>
-                  <span className="flex min-w-0 flex-col items-start gap-0.5 overflow-hidden">
-                    {t.cluster_name ? (
-                      <Badge variant="outline" className="max-w-full">
-                        <span className="truncate">{t.cluster_name}</span>
-                      </Badge>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                    {t.genres?.[0] && (
-                      <Badge
-                        variant="secondary"
-                        className="max-w-full font-normal"
-                      >
-                        <span className="truncate">
-                          {genreLabel(t.genres[0])}
-                          {t.language ? ` · ${t.language}` : ""}
-                        </span>
-                      </Badge>
-                    )}
-                    {!t.genres?.length && t.language && (
-                      <Badge
-                        variant="secondary"
-                        className="max-w-full font-normal"
-                      >
-                        <span className="truncate">{t.language}</span>
-                      </Badge>
-                    )}
-                  </span>
+                  <TrackBadges
+                    cluster={t.cluster_name}
+                    genres={t.genres}
+                    language={t.language}
+                  />
                   <span className="text-right text-sm tabular-nums">
                     {t.tempo != null ? Math.round(t.tempo) : "—"}
                   </span>
